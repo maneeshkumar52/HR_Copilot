@@ -7,7 +7,7 @@
 
 ### Mac / Linux
 ```bash
-chmod +x setup.sh && ./setup.sh     # one-time setup
+chmod +x setup.sh && ./setup.sh    # one-time setup
 source .venv/bin/activate
 streamlit run hr_copilot_ui.py      # opens http://localhost:8501
 ```
