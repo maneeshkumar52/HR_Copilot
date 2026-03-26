@@ -1,0 +1,52 @@
+{
+  "bands": [
+    {
+      "band": "B1",
+      "title": "Associate",
+      "min_ctc": 400000,
+      "max_ctc": 700000,
+      "notice_period_months": 1,
+      "esop_eligible": false
+    },
+    {
+      "band": "B2",
+      "title": "Senior Associate",
+      "min_ctc": 700000,
+      "max_ctc": 1200000,
+      "notice_period_months": 2,
+      "esop_eligible": false
+    },
+    {
+      "band": "B3",
+      "title": "Lead / Senior Lead",
+      "min_ctc": 1200000,
+      "max_ctc": 2000000,
+      "notice_period_months": 2,
+      "esop_eligible": false
+    },
+    {
+      "band": "B4",
+      "title": "Manager / Sr Manager",
+      "min_ctc": 2000000,
+      "max_ctc": 3500000,
+      "notice_period_months": 3,
+      "esop_eligible": true
+    },
+    {
+      "band": "B5",
+      "title": "Director",
+      "min_ctc": 3500000,
+      "max_ctc": 6000000,
+      "notice_period_months": 3,
+      "esop_eligible": true
+    },
+    {
+      "band": "B6",
+      "title": "VP / Senior Director",
+      "min_ctc": 6000000,
+      "max_ctc": 12000000,
+      "notice_period_months": 3,
+      "esop_eligible": true
+    }
+  ]
+}

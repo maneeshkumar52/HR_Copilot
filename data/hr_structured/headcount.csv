@@ -1,0 +1,9 @@
+department,headcount,open_positions,attrition_ytd,avg_tenure_years
+Engineering,342,18,24,3.2
+Product,87,5,6,2.8
+Sales,145,12,19,2.1
+HR,34,2,3,4.1
+Finance,52,3,4,3.8
+Operations,78,6,8,2.9
+Marketing,41,3,5,2.5
+Legal & Compliance,18,1,1,5.2
