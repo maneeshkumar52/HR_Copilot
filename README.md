@@ -1,5 +1,4 @@
 # HR Copilot — Multi-Agent Employee Self-Service System
-### WS01 · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
 
 ---
 
