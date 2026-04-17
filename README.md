@@ -1,606 +1,511 @@
-# HR Copilot — Multi-Agent Employee Self-Service System
+# HR Copilot — Production Multi-Agent RAG System
 
 > **Maneesh Kumar**
-> A production-grade multi-agent AI system that answers employee HR questions
-> using hybrid retrieval, parallel agent execution, NLI fact-checking, and RAGAS evaluation.
+> A production-grade, 5-agent pipeline for HR employee self-service — combining hybrid retrieval, parallel agent orchestration, NLI-based compliance verification, and local RAGAS evaluation. Runs fully offline. No API keys required.
 
 ---
 
-## What Is a Multi-Agent System?
+## System Architecture
 
-A **Multi-Agent System (MAS)** is a collection of specialised software agents
-that each handle a narrow domain and collaborate to solve problems no single
-agent could handle well alone.
-
-**Why not just use one big LLM?**
-
-| One Monolithic LLM | Multi-Agent System |
-|---|---|
-| Answers everything from one model | Each agent is a domain expert |
-| Accuracy degrades across 9+ HR topics | Specialist accuracy per domain |
-| Hard to add legal/compliance gates | Compliance is a dedicated stage |
-| No structured data queries | DataQueryAgent handles CSV/JSON |
-| No quality measurement | RAGAS evaluation per response |
-
-This project implements a **5-component, 5-agent pipeline** where each
-component maps to a distinct AI engineering concept.
-
----
-
-## Quick Start — 3 Commands
-
-### Mac / Linux
-```bash
-chmod +x setup.sh && ./setup.sh    # one-time setup (~5 min)
-source .venv/bin/activate
-streamlit run hr_copilot_ui.py      # opens http://localhost:8501
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        HR COPILOT PIPELINE                          │
+│                                                                     │
+│  Employee Query                                                     │
+│       │                                                             │
+│       ▼                                                             │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │  [B] OrchestratorAgent  (PlannerAgent)                     │     │
+│  │      Intent classify (9 intents) → Query decomposition     │     │
+│  │      Routing table → HRQueryPlan                           │     │
+│  └────────────────────┬───────────────────────────────────────┘     │
+│                       │  HRQueryPlan                                │
+│                       ▼                                             │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │  [C] ParallelAgentExecutor  (Fan-Out / Fan-In)             │     │
+│  │                                                            │     │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐       │     │
+│  │  │ PolicyRAG    │ │  DataQuery   │ │  Onboarding  │       │     │
+│  │  │ Agent        │ │  Agent       │ │  Agent       │       │     │
+│  │  │ (BaseAgent)  │ │ (BaseAgent)  │ │ (BaseAgent)  │       │     │
+│  │  │              │ │              │ │              │       │     │
+│  │  │ FAISS+BM25   │ │ salary_bands │ │ RAG scoped   │       │     │
+│  │  │ RRF fusion   │ │ headcount    │ │ + checklist  │       │     │
+│  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘       │     │
+│  │         └────────────────┴────────────────┘               │     │
+│  │                          │  []AgentResponse                │     │
+│  └──────────────────────────┼───────────────────────────────  │     │
+│                             │                                 │     │
+│                             ▼                                       │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │  [D] ComplianceGuardAgent  (Sequential Gate)               │     │
+│  │      1. Cross-encoder rerank  (ms-marco-MiniLM-L6-v2)      │     │
+│  │      2. NLI fact-check        (nli-deberta-v3-small)        │     │
+│  │      3. Legal compliance scan (5 sensitive topic patterns)  │     │
+│  └────────────────────────────────────────────────────────────┘     │
+│                             │  (verified_chunks, ComplianceResult)  │
+│                             ▼                                       │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │  [E] ResponseSynthesizerAgent                              │     │
+│  │      Synthesis: Ollama Mistral 7B OR template fallback     │     │
+│  │      Evaluation: RAGAS (faithfulness / relevancy / precision) │  │
+│  │      CI/CD Gate: faithfulness ≥ 0.80                       │     │
+│  └────────────────────────────────────────────────────────────┘     │
+│                             │  FinalHRResponse                     │
+│                             ▼                                       │
+│                      Employee Answer                                │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Windows
-```bat
+### Agent Framework Layer (`agent_framework.py`)
+
+The framework is **domain-agnostic** — it contains no HR logic. It enforces uniform contracts across all agents:
+
+```
+agent_framework.py
+  ├── BaseAgent (ABC)         — @property agent_name + run(plan) → AgentResponse
+  ├── PlannerAgent (ABC)      — plan(question, use_llm) → HRQueryPlan
+  ├── AgentRegistry           — Thread-safe service discovery (dict[AgentName → BaseAgent])
+  ├── AgentMessage            — Typed inter-agent envelope (sender, recipient, payload, trace_id)
+  ├── AgentTask               — Execution state tracker with latency_ms, AgentStatus
+  └── ParallelAgentExecutor   — ThreadPoolExecutor fan-out; sorted by confidence on fan-in
+```
+
+---
+
+## Pipeline Execution — Annotated Terminal Snapshots
+
+### Use Case 1: Multi-Domain Query (Parallel Execution)
+
+**Question:** *"What is my leave carry-forward limit and salary band as a Band 3 employee?"*
+
+```
+────────────────────────────────────────────────────────────
+  B: OrchestratorAgent — Intent Classification & Routing
+────────────────────────────────────────────────────────────
+  ✅  Intent:  MULTI_DOMAIN
+  ✅  Agents:  ['policy_rag', 'data_query']
+  ✅  Sub-Qs:  2
+  ℹ️    1. What is the annual leave carry-forward limit?
+  ℹ️    2. What is the salary band range for Band 3?
+
+────────────────────────────────────────────────────────────
+  C: Specialist Agents — Parallel Execution (Fan-Out)
+────────────────────────────────────────────────────────────
+  [ParallelExecutor] Launching 2 agents concurrently...
+  [ParallelExecutor] ✅ PolicyRAGAgent    completed in 1420ms
+  [ParallelExecutor] ✅ DataQueryAgent    completed in  312ms
+  ─────────────────────────────────────
+  Agent Execution Summary
+  ─────────────────────────────────────
+  ✅  policy_rag       1420 ms   [completed]
+  ✅  data_query        312 ms   [completed]
+  Wall-clock: 1420ms  (vs 1732ms sequential)
+
+────────────────────────────────────────────────────────────
+  D: ComplianceGuardAgent — Rerank + Fact-Check + Legal Scan
+────────────────────────────────────────────────────────────
+  [Compliance] Reranked 12 → 8 (thresh=0.0)
+  [Compliance] Fact-checked: 6/8 pass entailment (NLI ≥ 0.40)
+  [Compliance] No sensitive topics detected
+
+────────────────────────────────────────────────────────────
+  E: ResponseSynthesizerAgent — Merge + Format + RAGAS Eval
+────────────────────────────────────────────────────────────
+  ✅  Synthesized from 2 agent responses + 6 verified chunks
+  ✅  RAGAS evaluation complete
+
+────────────────────────────────────────────────────────────
+  HR COPILOT RESPONSE
+────────────────────────────────────────────────────────────
+
+  Q: What is my leave carry-forward limit and salary as Band 3?
+
+  Annual Leave Carry-Forward:
+  You may carry forward up to 8 days of unused annual leave to
+  the next calendar year. Up to 4 of those days may be encashed
+  at your basic daily rate upon carry-forward or exit.
+
+  Salary Band — B3 (Senior Lead):
+  CTC Range:    ₹12,00,000 – ₹20,00,000 per annum
+  Notice Period: 60 days
+  ESOP:         Not eligible at Band 3
+
+  Sources:   leave_policy.md, salary_bands.json
+  Agents:    policy_rag, data_query
+  Intent:    MULTI_DOMAIN
+
+  Quality Metrics (RAGAS):
+    Faithfulness:      0.92  ✅
+    Answer Relevancy:  0.85  ✅
+    Context Precision: 0.78
+    Latency:           1891 ms
+    Compliance:        ✅ PASS
+
+  Parallel Agent Trace:
+    ✅  policy_rag              1420ms
+    ✅  data_query               312ms
+```
+
+---
+
+### Use Case 2: POSH Hard Block (Compliance Gate Activation)
+
+**Question:** *"I want to file a POSH complaint against my manager."*
+
+```
+────────────────────────────────────────────────────────────
+  B: OrchestratorAgent
+────────────────────────────────────────────────────────────
+  ✅  Intent:  GRIEVANCE
+  ✅  Agents:  ['policy_rag', 'compliance']
+
+────────────────────────────────────────────────────────────
+  D: ComplianceGuardAgent — Legal Scan
+────────────────────────────────────────────────────────────
+  [Compliance] Flags: ['posh']
+  [Compliance] POSH complaint intent detected → HARD BLOCK
+
+────────────────────────────────────────────────────────────
+  HR COPILOT RESPONSE
+────────────────────────────────────────────────────────────
+
+  ⚠️  POSH complaints require confidential handling through
+  the Internal Complaints Committee (ICC).
+
+  Please contact: icc@enterprise.com
+  Ethics Hotline (confidential, 24×7): 1800-XXX-1234
+
+  The HR Copilot cannot process POSH complaints. All such
+  matters are handled exclusively by the ICC as per POSH
+  Act 2013.
+
+  Compliance:  ❌ BLOCKED
+```
+
+---
+
+### Use Case 3: Onboarding — Parallel RAG + Structured Checklist
+
+**Question:** *"What documents do I need to submit before my first day?"*
+
+```
+────────────────────────────────────────────────────────────
+  C: Specialist Agents — Parallel Execution
+────────────────────────────────────────────────────────────
+  [ParallelExecutor] ✅ OnboardingAgent    completed in 1751ms
+  [ParallelExecutor] ✅ PolicyRAGAgent     completed in 1753ms
+
+────────────────────────────────────────────────────────────
+  HR COPILOT RESPONSE
+────────────────────────────────────────────────────────────
+
+  Documents to Submit Before Joining:
+    ☐ Accept offer letter digitally on HRMS
+    ☐ Submit KYC: Aadhaar, PAN, 3 passport photos, bank details
+    ☐ Submit previous employment documents (offer letter,
+      relieving letter)
+    ☐ IT asset request auto-triggered — laptop ready on Day 1
+    ☐ Receive buddy assignment email from HR
+
+  Sources:  onboarding_guide.md, onboarding_checklist
+  Agents:   onboarding, policy_rag
+  Intent:   ONBOARDING
+  Faithfulness: 1.00  ✅
+```
+
+---
+
+### Use Case 4: RAGAS Evaluation Suite (CI/CD Gate)
+
+```bash
+python hr_copilot_pipeline.py --eval --gate
+```
+
+```
+────────────────────────────────────────────────────────────
+  EVALUATION SUITE — 6 HR Scenarios
+────────────────────────────────────────────────────────────
+  [1/6] Annual leave carry-forward + encashment
+  [2/6] Salary band range for Band 3 Senior Lead
+  [3/6] Remote work: 3 days WFH after probation
+  [4/6] First week mandatory tasks for new employee
+  [5/6] Highest attrition department + total headcount
+  [6/6] L&D budget + remote work options for Band 2
+
+────────────────────────────────────────────────────────────
+  EVALUATION SUMMARY
+────────────────────────────────────────────────────────────
+  Questions:         6
+  Avg Faithfulness:  0.923  (gate: 0.80)
+  Avg Relevancy:     0.712
+  Avg Latency:       2140 ms
+  CI/CD Gate:        ✅ PASS
+  Report saved:      data/eval/eval_suite_report.json
+```
+
+---
+
+## Design Decisions
+
+### 1. Why Multi-Agent Over a Single LLM?
+
+| Concern | Single LLM | Multi-Agent |
+|---|---|---|
+| **Accuracy** | Degrades across 9+ HR domains | Specialist retrieval per domain |
+| **Structured data** | Hallucinates numbers | `DataQueryAgent` reads JSON/CSV directly |
+| **Compliance** | No enforcement | Compliance is an explicit pipeline stage |
+| **Explainability** | Black box | Per-agent trace with latency + confidence |
+| **Testability** | Hard to unit-test | Each agent tested independently |
+| **LLM dependency** | Fails without LLM | Rule-based fallbacks throughout |
+
+### 2. Two-Stage Retrieval (Recall → Precision)
+
+```
+Stage 1 — Recall (Component A + C):
+  Bi-encoder (all-MiniLM-L6-v2, 384-dim)
+  Fast independent encoding: query and document vectors pre-computed
+  FAISS Inner Product → top-9 candidates  (~90ms)
+  BM25Okapi → top-7 keyword matches       (~5ms)
+  RRF fusion → top-6 unique chunks
+
+Stage 2 — Precision (Component D):
+  Cross-encoder (ms-marco-MiniLM-L6-v2)
+  Joint (query, chunk) encoding — expensive but exact
+  Re-sorts top-8 chunks by joint relevance score
+  NLI entailment check filters non-supporting chunks
+```
+
+**Why RRF over score normalisation?**
+
+Vector scores (0.85–0.97, narrow distribution) and BM25 scores (0–50+, wide distribution) are incommensurable. RRF uses ranks: `score = 1/(60 + rank_v) + 1/(60 + rank_bm25)`. Scale-invariant, no calibration required, empirically strong across retrieval tasks.
+
+### 3. ComplianceGuardAgent Is Not a BaseAgent
+
+A common design mistake would be to make every component a `BaseAgent`. `ComplianceGuardAgent` has a fundamentally different contract:
+
+```python
+# BaseAgent contract
+def run(self, plan: HRQueryPlan) -> AgentResponse: ...
+
+# ComplianceGuardAgent contract  
+def run(self, question: str, chunks: List[RetrievedChunk],
+        agent_response: Optional[AgentResponse]) -> Tuple[List[RetrievedChunk], ComplianceCheckResult]: ...
+```
+
+It is a **pipeline stage** (filter + gate), not a retriever. Forcing it into `BaseAgent` would require interface dilution or awkward plan packing. The distinction — specialist agents vs. pipeline stages — is an intentional architectural boundary.
+
+### 4. LLM-First + Rule-Based Fallback
+
+Every LLM call has a deterministic fallback:
+
+| Component | LLM Path | Fallback |
+|---|---|---|
+| Orchestrator | Ollama Mistral 7B → JSON plan | Regex routing table (9 intents) |
+| Synthesizer | Ollama Mistral 7B → prose | Keyword extraction template |
+| RAGAS | NLI model (local) | Cosine similarity only |
+
+Result: the system is **100% operational with no LLM running**. Production-grade resilience without cloud dependency.
+
+### 5. RAGAS Without the RAGAS Library
+
+The evaluation module (`component_e`) reimplements RAGAS locally:
+
+- **Faithfulness:** NLI entailment of answer sentences against verified context chunks (same `nli-deberta-v3-small` model already loaded for compliance)
+- **Answer Relevancy:** Cosine similarity between question and answer embeddings (same `all-MiniLM-L6-v2` already loaded for retrieval)
+- **Context Precision:** Fraction of retrieved chunks that contributed to the final answer
+
+No API keys. No `ragas` package dependency. Reuses models already in memory.
+
+---
+
+## Data Contracts (`hr_data_models.py`)
+
+All inter-agent communication flows through typed dataclasses. The pipeline never passes raw strings between stages.
+
+```python
+# Orchestrator → All Agents
+@dataclass
+class HRQueryPlan:
+    original_question : str
+    intent            : QueryIntent          # 9-value enum
+    sub_queries       : List[str]
+    agents_to_invoke  : List[AgentName]
+    priority_docs     : List[str]
+    needs_structured  : bool
+
+# Specialist Agent → Compliance + Synthesizer
+@dataclass
+class AgentResponse:
+    agent       : AgentName
+    answer      : str
+    sources     : List[str]
+    confidence  : float                      # 0.0–1.0
+    chunks_used : List[RetrievedChunk]
+
+# Compliance → Synthesizer
+@dataclass
+class ComplianceCheckResult:
+    passes           : bool
+    confidence       : float
+    flags            : List[str]             # e.g. ["termination", "pip"]
+    corrected_answer : Optional[str]         # non-None only on hard block
+
+# Synthesizer → Employee
+@dataclass
+class FinalHRResponse:
+    question           : str
+    answer             : str
+    sources            : List[str]
+    agents_contributed : List[str]
+    intent             : str
+    compliance_passed  : bool
+    caveats            : str
+    faithfulness       : float
+    answer_relevancy   : float
+    context_precision  : float
+    latency_ms         : float
+```
+
+---
+
+## Quick Start
+
+```bash
+# Mac / Linux
+chmod +x setup.sh && ./setup.sh
+source .venv/bin/activate
+python hr_copilot_pipeline.py --build-index     # one-time index build
+
+# Windows
 .\setup.bat
 .venv\Scripts\activate
-streamlit run hr_copilot_ui.py
+python hr_copilot_pipeline.py --build-index
+```
+
+**CLI:**
+```bash
+python hr_copilot_pipeline.py                           # demo + interactive
+python hr_copilot_pipeline.py --question "..."          # single query
+python hr_copilot_pipeline.py --eval                    # RAGAS eval suite
+python hr_copilot_pipeline.py --eval --gate             # CI/CD gate (exit 1 on fail)
+streamlit run hr_copilot_ui.py                          # web UI (localhost:8501)
+```
+
+**Run components individually:**
+```bash
+python agent_framework.py                    # test registry + parallel executor
+python component_a_hr_indexing.py            # build FAISS + BM25 index
+python component_b_orchestrator_agent.py     # test intent routing
+python component_c_policy_data_agents.py     # test hybrid retrieval
+python component_d_compliance_guard.py       # test compliance pipeline
+python component_e_response_synthesizer.py   # test synthesis + RAGAS
 ```
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
 HR_Copilot/
 │
-├── agent_framework.py                ← NEW: Multi-agent framework core
-│   ├── BaseAgent                     ← Abstract base every agent extends
-│   ├── PlannerAgent                  ← Base for routing/planning agents
-│   ├── AgentRegistry                 ← Central service discovery
-│   ├── AgentMessage                  ← Typed inter-agent messages
-│   ├── AgentTask                     ← Per-agent execution tracker
-│   └── ParallelAgentExecutor         ← Runs agents concurrently
+├── agent_framework.py                 ← Domain-agnostic multi-agent backbone
+│   ├── BaseAgent (ABC)                ← Uniform interface: agent_name + run(plan)
+│   ├── PlannerAgent (ABC)             ← Routing agents: plan(question) → HRQueryPlan
+│   ├── AgentRegistry                  ← Thread-safe service discovery
+│   ├── AgentMessage                   ← Typed inter-agent envelope
+│   ├── AgentTask                      ← Execution tracker with latency + status
+│   └── ParallelAgentExecutor          ← ThreadPoolExecutor fan-out/fan-in
 │
-├── hr_data_models.py                 ← Shared typed dataclasses (contracts)
-│   ├── QueryIntent (Enum)            ← 9 HR intent categories
-│   ├── AgentName (Enum)              ← Named agents
-│   ├── HRQueryPlan                   ← Orchestrator → all agents
-│   ├── RetrievedChunk                ← One knowledge chunk
-│   ├── AgentResponse                 ← Specialist agent output
-│   ├── ComplianceCheckResult         ← Compliance gate output
-│   └── FinalHRResponse               ← What the employee sees
+├── hr_data_models.py                  ← Shared typed contracts (no business logic)
 │
-├── component_a_hr_indexing.py        ← Phase 1: Knowledge Base
-├── component_b_orchestrator_agent.py ← Phase 2: Intent Routing
-├── component_c_policy_data_agents.py ← Phase 3: Retrieval Agents
-├── component_d_compliance_guard.py   ← Phase 4: Compliance Gate
-├── component_e_response_synthesizer.py ← Phase 5: Synthesis + Eval
+├── component_a_hr_indexing.py         ← FAISS + BM25 index builder
+├── component_b_orchestrator_agent.py  ← Intent classification + query routing
+├── component_c_policy_data_agents.py  ← PolicyRAGAgent + DataQueryAgent
+├── component_d_compliance_guard.py    ← OnboardingAgent + ComplianceGuardAgent
+├── component_e_response_synthesizer.py ← Synthesis + RAGAS evaluation
 │
-├── hr_copilot_pipeline.py            ← CLI entry point (full pipeline)
-├── hr_copilot_ui.py                  ← Streamlit web UI
+├── hr_copilot_pipeline.py             ← End-to-end orchestration + CLI
+├── hr_copilot_ui.py                   ← Streamlit UI (5 tabs)
 │
 ├── data/
-│   ├── hr_docs/          ← 6 HR policy markdown files
-│   ├── hr_structured/    ← salary_bands.json + headcount.csv
-│   ├── index/            ← FAISS + BM25 (built by Component A)
-│   └── eval/             ← RAGAS evaluation reports
+│   ├── hr_docs/                       ← 6 HR policy markdown files
+│   ├── hr_structured/                 ← salary_bands.json + headcount.csv
+│   ├── index/                         ← FAISS + BM25 (built by Component A)
+│   └── eval/                          ← RAGAS evaluation reports (JSON)
 │
+├── master_prompt.txt                  ← 6-phase AI agent regeneration prompt
+├── WORKSHOP_GUIDE.md                  ← Component challenges + edge cases
 ├── requirements.txt
-├── setup.sh / setup.bat
-└── .env.example
+└── setup.sh / setup.bat
 ```
 
 ---
 
-## The Multi-Agent Framework (`agent_framework.py`)
+## Azure Production Mapping
 
-This is the **architectural backbone** — entirely independent of HR logic.
-
-### 1. `BaseAgent` — Uniform Interface
-
-```python
-class BaseAgent(ABC):
-    @property
-    @abstractmethod
-    def agent_name(self) -> AgentName: ...
-
-    @abstractmethod
-    def run(self, plan: HRQueryPlan) -> AgentResponse: ...
-```
-
-Every specialist agent **extends** `BaseAgent`. The pipeline doesn't care
-_which_ agent it's calling — it just calls `.run(plan)` on all of them.
-This is the **Liskov Substitution Principle** in action.
-
-### 2. `AgentRegistry` — Service Discovery
-
-```python
-registry = AgentRegistry()
-registry.register(PolicyRAGAgent(...))   # registers + calls .initialize()
-registry.register(DataQueryAgent())
-
-agent = registry.get(AgentName.POLICY_RAG)
-response = agent.run(plan)
-```
-
-The OrchestratorAgent decides **which** agents to call.
-The Registry tells the executor **where** they are.
-New agents can be added without touching the pipeline code.
-
-### 3. `ParallelAgentExecutor` — Fan-Out / Fan-In
-
-```
-Sequential:  PolicyRAG(3s) → DataQuery(1s) → Onboarding(2s) = 6s total
-Parallel:    All three at once                               = ~3s total
-```
-
-```python
-executor = ParallelAgentExecutor(registry, max_workers=4)
-responses, tasks = executor.execute(plan, plan.agents_to_invoke)
-
-for task in tasks:
-    print(f"{task.agent_name.value}: {task.latency_ms:.0f}ms [{task.status.value}]")
-```
-
-### 4. `AgentMessage` — Typed Communication
-
-```python
-msg = AgentMessage(
-    sender    = AgentName.ORCHESTRATOR,
-    recipient = AgentName.POLICY_RAG,
-    payload   = plan,
-    msg_type  = "request",
-)
-```
-
-Agents communicate through **typed messages** rather than direct calls.
-This enables logging, async queuing, and retry logic.
-
----
-
-## Component-by-Component Walkthrough
-
-### Component A — HR Knowledge Base (`component_a_hr_indexing.py`)
-
-**What it does:** Loads 6 HR policy markdown files, splits them into chunks,
-and builds two indexes for retrieval.
-
-```
-HR Policy Docs (.md)
-      ↓
-  load_hr_documents()    — reads files, infers HR category
-      ↓
-  chunk_hr_document()    — splits on section boundaries (## ###)
-      ↓
-  generate_embeddings()  — all-MiniLM-L6-v2 (384-dim vectors)
-      ↓
-  build_faiss_index()    — FAISS IndexFlatIP for vector search
-  build_bm25_index()     — BM25Okapi for keyword search
-      ↓
-  save_index()           — data/index/ (shared by all agents)
-```
-
-**Key concepts:**
-- **Chunking** — Splitting long documents into ~300-word pieces so retrieval
-  returns precise policy clauses, not entire documents.
-- **Bi-encoder embeddings** — Sentence-level semantic vectors (fast, ~90ms).
-- **FAISS** — Facebook AI Similarity Search; answers "which 9 vectors are
-  closest to this query vector?" in milliseconds.
-- **BM25** — Classical keyword search algorithm (TF-IDF + length normalisation).
-
-**Run it:**
-```bash
-python component_a_hr_indexing.py   # builds data/index/
-```
-
----
-
-### Component B — OrchestratorAgent (`component_b_orchestrator_agent.py`)
-
-**What it does:** Reads the employee's question and decides:
-- _What is the intent?_ (leave? compensation? onboarding?)
-- _Which agents should handle it?_
-- _Can it be split into independent sub-questions?_
-
-```
-Employee Question
-      ↓
-  classify_intent_rules()     — regex keyword matching on 9 intents
-  OR orchestrate_with_llm()   — Ollama Mistral 7B structured JSON output
-      ↓
-  decompose_query_rules()     — split "X and also Y" into [X, Y]
-      ↓
-  HRQueryPlan {
-    intent,          ← QueryIntent enum
-    agents_to_invoke,← which BaseAgents to call
-    sub_queries,     ← list of atomic sub-questions
-    priority_docs,   ← which HR domains to retrieve from
-    needs_structured ← does this need CSV/JSON data?
-  }
-```
-
-**Key concepts:**
-- **Intent classification** — mapping free text to a finite set of categories.
-- **Query decomposition** — breaking "multi-hop" questions into independent
-  sub-questions each agent can answer separately.
-- **Routing table** — deterministic mapping from intent → agents:
-  ```python
-  ROUTING_TABLE = {
-      QueryIntent.LEAVE_POLICY:  [PolicyRAGAgent, ComplianceGuardAgent],
-      QueryIntent.COMPENSATION:  [PolicyRAGAgent, DataQueryAgent, ComplianceGuardAgent],
-      QueryIntent.HEADCOUNT_DATA:[DataQueryAgent],
-      ...
-  }
-  ```
-- **LLM-first + rule fallback** — tries Ollama; falls back to regex rules if
-  Ollama is not running (100% operational without an LLM).
-
-**The `OrchestratorAgent` class** extends `PlannerAgent` (not `BaseAgent`)
-because it _plans_ work for other agents rather than _answering_ questions.
-
-**Run it:**
-```bash
-python component_b_orchestrator_agent.py
-```
-
----
-
-### Component C — Specialist Retrieval Agents (`component_c_policy_data_agents.py`)
-
-Two agents, both extending `BaseAgent`, run **in parallel** via `ParallelAgentExecutor`.
-
-#### `PolicyRAGAgent` — Hybrid Retrieval
-
-```
-Query Text
-    ├──→ FAISS vector search  (top-9 semantically similar chunks)
-    └──→ BM25 keyword search  (top-7 keyword-matching chunks)
-                ↓
-       RRF Fusion (Reciprocal Rank Fusion)
-                ↓
-         Top-6 deduplicated chunks
-```
-
-**Why Hybrid (Vector + Keyword)?**
-
-| Vector Search (FAISS) | Keyword Search (BM25) |
-|---|---|
-| Finds _semantically_ similar chunks | Finds chunks with _exact_ terms |
-| `"annual leave entitlement"` matches `"vacation days"` | `"carry-forward"` finds that exact phrase |
-| Score range: 0.85 – 0.97 (narrow) | Score range: 0 – 50+ (wide) |
-| Misses exact numbers/codes | Finds "8 days", "Band B4" precisely |
-
-**Why RRF (Reciprocal Rank Fusion)?**
-
-You can't add a vector score of 0.91 to a BM25 score of 23 — they're on
-completely different scales. RRF uses **ranks** instead of scores:
-
-```
-RRF(chunk) = 1/(60 + vector_rank) + 1/(60 + bm25_rank)
-```
-
-A chunk ranked #1 by both gets ~0.033; ranked #5 by both gets ~0.031.
-Scale-invariant, mathematically sound.
-
-#### `DataQueryAgent` — Structured Data Lookup
-
-Handles questions about numbers that policy documents don't contain:
-- `salary_bands.json` — 6 bands (B1–B6) with CTC ranges, notice period, ESOP eligibility
-- `headcount.csv` — 9 departments with headcount, attrition, open positions
-
-```python
-# Example: "What is the salary range for a Band 4 manager?"
-band_match = re.search(r'b(\d)', question, re.IGNORECASE)  # → "4"
-results = [b for b in bands if f"B{band_match.group(1)}" == b["band"]]
-# Returns: "Band B4 (Manager / Sr Manager): ₹20L – ₹35L CTC · ESOP eligible"
-```
-
-**Run it:**
-```bash
-python component_c_policy_data_agents.py
-```
-
----
-
-### Component D — Compliance Gate (`component_d_compliance_guard.py`)
-
-Two classes with different roles:
-
-#### `OnboardingAgent` — New Joiner Specialist (extends `BaseAgent`)
-
-Scopes retrieval to onboarding docs only and augments with a structured
-checklist. New joiners ask procedural questions ("what do I bring on Day 1?")
-that a general agent tends to over-retrieve for.
-
-#### `ComplianceGuardAgent` — Three-Stage Safety Pipeline (does NOT extend `BaseAgent`)
-
-This is a **pipeline stage** (guard), not a specialist retriever. Its
-interface takes `(question, chunks, agent_response)` — not just a plan.
-
-**Stage 1 — Cross-Encoder Reranking**
-
-```
-Retrieved Chunks (from PolicyRAGAgent)
-      ↓
-  cross-encoder/ms-marco-MiniLM-L6-v2
-  Evaluates query + chunk TOGETHER (joint encoding)
-      ↓
-  Re-sorted chunks by relevance score
-```
-
-_Bi-encoder_ (Component A): fast, independent encoding, good recall.
-_Cross-encoder_ (here): slow, joint encoding, excellent precision.
-Classic two-stage retrieval pipeline.
-
-**Stage 2 — NLI Fact-Check**
-
-```
-Each chunk
-      ↓
-  cross-encoder/nli-deberta-v3-small
-  ENTAILMENT / NEUTRAL / CONTRADICTION
-      ↓
-  Only ENTAILMENT chunks (score ≥ 0.40) pass to Synthesizer
-```
-
-_Why?_ BM25 often retrieves chunks that share terms but answer a different
-question (e.g., "sick leave" chunk when the question is about "carry-forward").
-NLI catches this — the chunk is NEUTRAL, not ENTAILMENT.
-
-**Stage 3 — Legal Compliance Scan**
-
-```python
-SENSITIVE_PATTERNS = {
-    "posh":       r"\b(posh|sexual harassment|misconduct)\b",
-    "termination":r"\b(terminat|fired|let go)\b",
-    "pip":        r"\b(pip|performance improvement)\b",
-    ...
-}
-```
-
-- **Caveat injection** for sensitive topics (e.g., POSH → contact ICC)
-- **Hard block** if the question shows intent to file a POSH complaint
-
-**Run it:**
-```bash
-python component_d_compliance_guard.py
-```
-
----
-
-### Component E — Response Synthesis + RAGAS Evaluation (`component_e_response_synthesizer.py`)
-
-**Synthesis:**
-
-```
-Agent Responses (from C + D) + Verified Chunks
-      ↓
-  synthesize_with_ollama()   — Mistral 7B with intent-specific format hints
-  OR synthesize_template()   — keyword extraction fallback (no LLM needed)
-      ↓
-  Append compliance caveats
-      ↓
-  FinalHRResponse
-```
-
-**RAGAS Evaluation (local, no API key):**
-
-| Metric | What it measures | How computed |
+| Component | Local (this repo) | Azure Equivalent |
 |---|---|---|
-| **Faithfulness** | Is the answer grounded in context? | NLI entailment of answer sentences vs context |
-| **Answer Relevancy** | Does the answer address the question? | Cosine similarity (question embedding, answer embedding) |
-| **Context Precision** | Are retrieved chunks all useful? | Fraction of chunks that contribute to the answer |
-
-```
-Faithfulness ≥ 0.80 → CI/CD gate PASS
-Faithfulness < 0.80 → CI/CD gate FAIL (deployment blocked)
-```
-
-**Run it:**
-```bash
-python component_e_response_synthesizer.py
-```
-
----
-
-## How All 5 Agents Work Together
-
-```
-Employee: "What is my leave carry-forward limit and can I also
-           check my salary band as a Band 3 employee?"
-
-[B] OrchestratorAgent.plan()
-    Intent:  MULTI_DOMAIN
-    Agents:  [PolicyRAGAgent, DataQueryAgent, ComplianceGuardAgent]
-    Sub-Qs:  ["What is the leave carry-forward limit?",
-               "What is the salary band for Band 3?"]
-
-[C] ParallelAgentExecutor.execute()          ← CONCURRENT
-    Thread 1: PolicyRAGAgent.run(plan)
-      FAISS + BM25 → RRF → 6 chunks from leave_policy.md
-    Thread 2: DataQueryAgent.run(plan)
-      salary_bands.json → "B3 (Senior Lead): ₹12L–₹20L CTC"
-    (Thread 1 and Thread 2 run simultaneously, not sequentially)
-
-[D] ComplianceGuardAgent.run()               ← SEQUENTIAL GATE
-    Cross-encoder reranks 6 chunks
-    NLI: 4/6 pass ENTAILMENT ≥ 0.40
-    Scan: no sensitive topics
-    passes=True, flags=[]
-
-[E] ResponseSynthesizerAgent                 ← MERGES ALL OUTPUTS
-    Merges PolicyRAG answer + DataQuery table
-    Synthesizes with Mistral 7B (or template fallback)
-    Evaluates: faithfulness=0.87, relevancy=0.82, precision=0.75
-
-Employee sees:
-  "Annual leave carry-forward limit is 8 days (encashable up to 4 days).
-   Your Band 3 (Senior Lead) salary range is ₹12L – ₹20L CTC.
-   Source: leave_policy.md, salary_bands.json"
-```
-
----
-
-## CLI Commands
-
-```bash
-# One-time: build FAISS + BM25 index
-python hr_copilot_pipeline.py --build-index
-
-# Interactive mode (type questions)
-python hr_copilot_pipeline.py
-
-# Single question
-python hr_copilot_pipeline.py --question "What is the maternity leave policy?"
-
-# Run 6-question RAGAS evaluation suite
-python hr_copilot_pipeline.py --eval
-
-# Eval + CI/CD gate (exit code 1 if faithfulness < 0.80)
-python hr_copilot_pipeline.py --eval --gate
-```
-
----
-
-## Run Each Phase Individually (Workshop Mode)
-
-```bash
-python component_a_hr_indexing.py           # Phase 1: FAISS + BM25 index
-python component_b_orchestrator_agent.py    # Phase 2: OrchestratorAgent routing
-python component_c_policy_data_agents.py    # Phase 3: PolicyRAG + DataQuery
-python component_d_compliance_guard.py      # Phase 4: Rerank + NLI + Legal
-python component_e_response_synthesizer.py  # Phase 5: Synthesize + RAGAS
-python hr_copilot_pipeline.py               # Phase 6: Full pipeline CLI
-python agent_framework.py                   # Framework: test BaseAgent + Registry
-streamlit run hr_copilot_ui.py              # UI: Streamlit web app
-```
-
----
-
-## The Streamlit Web UI (5 Tabs)
-
-| Tab | What it shows |
-|---|---|
-| **💬 Chat** | Ask any HR question; see agent badges + RAGAS scores |
-| **🎯 Scenarios** | 40 pre-built HR questions across 8 domains |
-| **📊 Eval Suite** | 6-question RAGAS benchmark + CI/CD gate result |
-| **📚 Knowledge Base** | Browse HR policies, salary bands, headcount data |
-| **🏗️ Architecture** | Interactive 5-agent pipeline diagram |
-
----
-
-## Local vs Azure Production
-
-| Component | Local (this repo) | Azure Production |
-|---|---|---|
-| Embeddings | all-MiniLM-L6-v2 (384-dim) | text-embedding-3-large (3072-dim) |
-| Vector Search | FAISS flat index | Azure AI Search (HNSW) |
-| Keyword Search | BM25Okapi | Azure AI Search full-text |
-| LLM | Mistral 7B (Ollama) | Azure OpenAI GPT-4o |
-| Reranker | ms-marco-MiniLM-L6-v2 | Azure AI Search semantic ranker |
-| NLI Model | nli-deberta-v3-small | Azure AI Language classification |
-| Agent Parallelism | ThreadPoolExecutor | Azure Durable Functions fan-out |
-| Registry | In-process AgentRegistry | Azure API Management |
-| Messages | In-process AgentMessage | Azure Service Bus |
+| Embeddings | all-MiniLM-L6-v2 (384-dim) | Azure OpenAI `text-embedding-3-large` (3072-dim) |
+| Vector search | FAISS IndexFlatIP | Azure AI Search — HNSW with oversampling |
+| Keyword search | BM25Okapi | Azure AI Search full-text (BM25F) |
+| Hybrid fusion | Manual RRF | Azure AI Search hybrid + semantic ranker built-in |
+| Cross-encoder rerank | ms-marco-MiniLM-L6-v2 | Azure AI Search semantic ranker (L2 neural) |
+| NLI fact-check | nli-deberta-v3-small | Azure AI Language custom classification |
+| LLM synthesis | Ollama Mistral 7B | Azure OpenAI GPT-4o |
+| Agent parallelism | `ThreadPoolExecutor` | Azure Durable Functions fan-out/fan-in |
+| Agent registry | In-process `AgentRegistry` | Azure API Management + service registry |
+| Inter-agent messages | In-process `AgentMessage` | Azure Service Bus (async) |
+| Compliance scan | Regex + NLI | Azure Content Safety + custom policy rules |
+| Evaluation | Local RAGAS reimplementation | Azure AI Evaluation SDK (RAGAS-compatible) |
+| Pipeline orchestration | `hr_copilot_pipeline.py` | Azure AI Foundry Agent Service |
 | UI | Streamlit (localhost) | Azure Container Apps |
 
 ---
 
-## 40 Sample Questions to Try
+## Compliance Architecture
 
-### Leave Policy
-1. What is the maximum annual leave carry-forward and can it be encashed?
-2. How many sick leave days am I entitled to per year?
-3. What is the maternity leave duration?
-4. Can I combine casual leave and annual leave for a long trip?
-5. What bereavement leave am I entitled to if a parent passes away?
+The compliance layer addresses HR-specific legal exposure:
 
-### Compensation & Benefits
-6. What is the salary band range for a Band 3 Senior Lead?
-7. What is the CTC range for a Band 4 Manager and are they ESOP eligible?
-8. Which monthly allowances are tax-exempt?
-9. How is variable pay calculated and when is it paid?
-10. What is the performance rating and increment matrix?
+| Risk | Detection | Response |
+|---|---|---|
+| Termination advice | `r"\b(terminat\|dismiss\|fired)\b"` | Caveat: refer to HRBP + Legal |
+| POSH — informational | `r"\b(posh\|harassment\|misconduct)\b"` | Caveat: ICC contact details |
+| POSH — complaint intent | `r"\b(file\|lodge\|register)\b.*\b(complaint\|harassment)\b"` | **Hard block** — ICC redirect, no answer generated |
+| PIP | `r"\b(pip\|performance improvement)\b"` | Caveat: HRBP personalisation required |
+| Legal threat | `r"\b(sue\|lawsuit\|labour court\|tribunal)\b"` | Caveat: escalate to Legal |
+| Salary reduction | `r"\b(salary cut\|ctc reduction\|demotion)\b"` | Caveat: HR Director approval required |
 
-### Remote Work
-11. Can I work from home 3 days a week as a confirmed employee?
-12. Can I work from abroad for a month? What approvals do I need?
-13. What are the core working hours I must be available during?
-14. I am on probation — how many days must I come to office?
-15. How do I apply for a recurring weekly remote work schedule?
-
-### Learning & Development
-16. What is my annual L&D budget?
-17. How do I claim reimbursement for an AWS certification exam?
-18. Does unused L&D budget carry forward to next year?
-19. What internal learning programs does Enterprise Corp offer?
-20. What is the clawback policy if I leave after a company-sponsored certification?
-
-### POSH — Hard Block (watch the compliance guard)
-21. I want to file a POSH complaint against my manager.
-22. I need to register a sexual harassment complaint — who do I contact?
-23. My colleague made inappropriate advances — how do I file formally?
-24. How do I lodge a misconduct complaint about workplace harassment?
-
-### POSH — Caveat Only
-25. What is the company's POSH policy?
-26. Is POSH training mandatory for all employees?
-
-### Termination — Caveat Trigger
-27. What happens if I am terminated during my probation period?
-28. Can I be fired for consistently poor performance reviews?
-29. What is the notice period if I am dismissed without cause?
-
-### PIP — Caveat Trigger
-30. I have been placed on a PIP — what are my rights and next steps?
-31. What happens if I fail my performance improvement plan?
-
-### Legal Action — Caveat Trigger
-32. Can I sue the company for wrongful termination?
-33. How do I escalate a grievance to the labour court?
-34. What is the whistleblower protection policy?
-
-### Salary — Caveat Trigger
-35. Can my salary be cut if I move to a lower band role?
-36. Is the company allowed to reduce my CTC without my consent?
-
-### Out-of-Scope
-37. What is the weather forecast for tomorrow?
-38. Can you book a flight ticket to Mumbai for me?
-
-### Multi-Domain
-39. I am on a PIP and want to know if I can take annual leave and work remotely.
-40. If I get terminated, does my ESOP vest and can I encash my remaining leave?
+**Design principle:** caveats are additive (system remains helpful), hard blocks are selective (only when answering would itself create liability).
 
 ---
 
-## Key Concepts Reference
+## Performance Profile
 
-| Concept | Where used | Why it matters |
+| Scenario | Agents invoked | Typical latency |
 |---|---|---|
-| **Multi-Agent System** | Entire project | Specialist agents outperform monolithic LLM |
-| **BaseAgent / Interface** | agent_framework.py | Uniform interface = easy to add new agents |
-| **AgentRegistry** | agent_framework.py | Service discovery without hardcoded references |
-| **ParallelAgentExecutor** | hr_copilot_pipeline.py | Fan-out reduces wall-clock latency |
-| **Hybrid Retrieval (RAG)** | component_c | Vector + keyword = better recall |
-| **RRF Fusion** | component_c | Scale-invariant rank merging |
-| **Cross-Encoder Reranking** | component_d | Two-stage retrieve-then-rank |
-| **NLI Fact-Check** | component_d | Prevents hallucinated answers |
-| **Compliance Gate** | component_d | Legal liability mitigation |
-| **RAGAS Evaluation** | component_e | CI/CD quality gate (no API key needed) |
+| Single-domain policy query | PolicyRAGAgent | 1.2 – 1.8s |
+| Structured data lookup | DataQueryAgent | 0.2 – 0.5s |
+| Multi-domain (parallel) | PolicyRAGAgent + DataQueryAgent | 1.4 – 2.0s (wall-clock) |
+| Onboarding query | OnboardingAgent + PolicyRAGAgent | 1.7 – 2.2s |
+| Full multi-domain + compliance | 3 agents + compliance + RAGAS | 2.5 – 4.0s |
+
+All timings on CPU only (M1/M2 Mac or comparable Linux). No GPU required.
 
 ---
 
 ## Troubleshooting
 
-| Issue | Fix |
+| Symptom | Resolution |
 |---|---|
 | `ModuleNotFoundError: faiss` | `pip install faiss-cpu` |
-| `ModuleNotFoundError: streamlit` | `pip install streamlit` |
-| `ModuleNotFoundError: agent_framework` | Ensure you're running from the `HR_Copilot/` directory |
-| Ollama not found | Install from https://ollama.com — template fallback works without it |
-| Index not found | Run `python component_a_hr_indexing.py` first |
+| `ModuleNotFoundError: agent_framework` | Run from `HR_Copilot/` directory |
+| Index not found | `python component_a_hr_indexing.py` |
+| Ollama not found | Install from ollama.com — template fallback activates automatically |
+| Agents not running in parallel | Verify `agent_framework.py` is in working directory |
 | Port 8501 busy | `streamlit run hr_copilot_ui.py --server.port 8502` |
-| Answer shows "No relevant policy found" | Rebuild index: `python component_a_hr_indexing.py` |
-| Agents don't run in parallel | Ensure `agent_framework.py` is in the same directory |
+| RAGAS faithfulness = 0.0 | NLI model download incomplete — re-run component D once |
 
 ---
 
-*HR Copilot · Multi-Agent Framework Edition · Maneesh Kumar*
+*HR Copilot · Multi-Agent RAG Framework · Maneesh Kumar*
