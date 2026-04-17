@@ -191,5 +191,5 @@ These queries test the compliance guard, POSH blocker, caveats, boundary routing
 | Port 8501 busy | `streamlit run hr_copilot_ui.py --server.port 8502` |
 | Answer shows "No relevant policy found" | Run `python component_a_hr_indexing.py` to rebuild the index |
 
-*HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada*
+*HR Copilot · Maneesh Kumar *
 >>>>>>> 40b43563 (Initial commit)
