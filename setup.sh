@@ -9,8 +9,8 @@ BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 echo -e "${BLUE}${BOLD}"
 echo "  ╔══════════════════════════════════════════════════════════╗"
-echo "  ║  HR Copilot — Multi-Agent Setup · MLDS 2026             ║"
-echo "  ║  Maneesh Kumar & Ravikiran Ravada                        ║"
+echo "  ║  HR Copilot — Multi-Agent Setup                           ║"
+echo "  ║  Maneesh Kumar                                            ║"
 echo "  ╚══════════════════════════════════════════════════════════╝${NC}"
 
 # 1. Python check

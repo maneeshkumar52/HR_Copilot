@@ -329,7 +329,7 @@ def render_sidebar():
             st.markdown(f"{icon} `{agent}`")
 
         st.divider()
-        st.caption("MLDS 2026 · Maneesh Kumar & Ravikiran Ravada")
+        st.caption("HR Copilot · Maneesh Kumar ")
 
 
 # ── Pipeline diagram ─────────────────────────────────────────────────────────
@@ -811,7 +811,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>🤖 HR Copilot</h1>
-        <p>Multi-Agent Employee Self-Service System · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada</p>
+        <p>Multi-Agent Employee Self-Service System · Maneesh Kumar </p>
     </div>
     """, unsafe_allow_html=True)
 

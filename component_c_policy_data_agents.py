@@ -2,10 +2,12 @@
 ============================================================
 COMPONENT C — PolicyRAGAgent + DataQueryAgent
 ============================================================
-HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+HR Copilot · Maneesh Kumar 
 
 Use Case:
-  Two specialist agents run in parallel, each expert in its domain:
+  Two specialist agents run in PARALLEL, each expert in its domain.
+  Both extend BaseAgent so the ParallelAgentExecutor can run them
+  concurrently without knowing their internal details.
 
   PolicyRAGAgent — searches the HR policy document corpus using
     hybrid retrieval (FAISS vector + BM25 keyword + RRF fusion).
@@ -19,6 +21,13 @@ Why two agents?
   Unstructured policy docs → best answered by semantic RAG
   Structured data (CSVs, JSONs) → best answered by exact lookup
   Merging both → richer, more accurate answers than either alone.
+
+Multi-Agent Framework Integration:
+  Both agents extend BaseAgent, which means:
+    • They register in AgentRegistry with a uniform interface.
+    • ParallelAgentExecutor can call .run(plan) on each in a thread
+      without knowing their internals.
+    • New specialist agents can be added by just subclassing BaseAgent.
 
 Azure equivalents:
   PolicyRAGAgent  → Azure AI Search (hybrid) + Azure OpenAI
@@ -38,6 +47,7 @@ from sentence_transformers import SentenceTransformer
 from hr_data_models import (
     HRQueryPlan, RetrievedChunk, AgentResponse, AgentName, QueryIntent
 )
+from agent_framework import BaseAgent
 from component_a_hr_indexing import load_index, INDEX_DIR
 from component_b_orchestrator_agent import orchestrator_agent
 
@@ -56,9 +66,10 @@ RRF_K      = 60     # RRF constant — see WS01 Component C explanation
 # POLICY RAG AGENT
 # Hybrid retrieval: FAISS vector + BM25 + RRF fusion
 # ═══════════════════════════════════════════════════════════════
-class PolicyRAGAgent:
+class PolicyRAGAgent(BaseAgent):
     """
     Specialist agent for HR policy document retrieval.
+    Extends BaseAgent → can be registered and run in parallel.
 
     Architecture:
       Query → Vector Search (FAISS) ──┐
@@ -73,7 +84,11 @@ class PolicyRAGAgent:
         self.faiss_index = faiss_index
         self.bm25        = bm25
         self.model       = model
-        self.name        = AgentName.POLICY_RAG
+        self._name       = AgentName.POLICY_RAG
+
+    @property
+    def agent_name(self) -> AgentName:
+        return self._name
 
     def _vector_search(self, query: str, category_filter: Optional[List[str]],
                        top_k: int = TOP_K_VEC) -> List[Tuple[int, float]]:
@@ -179,7 +194,7 @@ class PolicyRAGAgent:
                 source_file = c["source_file"],
                 category    = c["category"],
                 rrf_score   = rrf_score,
-                agent_source= self.name.value,
+                agent_source= self._name.value,
             ))
         return results
 
@@ -258,7 +273,7 @@ class PolicyRAGAgent:
         raw_answer = "\n\n".join(answer_parts) if answer_parts else "No relevant policy found."
 
         return AgentResponse(
-            agent       = self.name,
+            agent       = self._name,
             answer      = raw_answer,
             sources     = list({c.source_file.split("/")[-1] for c in deduped}),
             confidence  = deduped[0].rrf_score if deduped else 0.0,
@@ -275,10 +290,10 @@ class PolicyRAGAgent:
 # DATA QUERY AGENT
 # Answers structured data questions from CSV / JSON files
 # ═══════════════════════════════════════════════════════════════
-class DataQueryAgent:
+class DataQueryAgent(BaseAgent):
     """
     Specialist agent for structured HR data queries.
-    Uses pandas for CSV and json for structured data.
+    Extends BaseAgent → can be registered and run in parallel.
 
     Why a separate agent?
       Policy RAG retrieves text passages — it cannot compute
@@ -294,9 +309,13 @@ class DataQueryAgent:
     DATA_DIR = "data/hr_structured"
 
     def __init__(self):
-        self.name = AgentName.DATA_QUERY
+        self._name         = AgentName.DATA_QUERY
         self._salary_bands = None
         self._headcount    = None
+
+    @property
+    def agent_name(self) -> AgentName:
+        return self._name
 
     def _load_salary_bands(self) -> dict:
         if self._salary_bands is None:
@@ -451,7 +470,7 @@ class DataQueryAgent:
 
         combined = "\n\n".join(answers)
         return AgentResponse(
-            agent       = self.name,
+            agent       = self._name,
             answer      = combined,
             sources     = list(set(sources)),
             confidence  = 0.92,   # structured data is highly reliable

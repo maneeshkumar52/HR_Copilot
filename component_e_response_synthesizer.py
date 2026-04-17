@@ -2,7 +2,7 @@
 ============================================================
 COMPONENT E — ResponseSynthesizerAgent + RAGAS Evaluation
 ============================================================
-HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+HR Copilot · Maneesh Kumar 
 
 Use Case:
   The OrchestratorAgent has routed the query to 2-3 specialist

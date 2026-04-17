@@ -1,8 +1,8 @@
 """
 ============================================================
-COMPONENT D — ComplianceGuardAgent
+COMPONENT D — OnboardingAgent + ComplianceGuardAgent
 ============================================================
-HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+HR Copilot · Maneesh Kumar 
 
 Use Case:
   An employee asks about termination during probation.
@@ -18,6 +18,15 @@ Use Case:
 
   HR-specific risk: Wrong advice on termination, POSH, or
   compliance can expose the company to legal liability.
+
+Multi-Agent Framework Integration:
+  OnboardingAgent  → extends BaseAgent (registered, runs in parallel)
+  ComplianceGuardAgent → NOT a BaseAgent (different interface):
+    Input:  (question, chunks, agent_response) — it filters, not retrieves
+    Output: (verified_chunks, ComplianceCheckResult) — not AgentResponse
+    Role:   pipeline STAGE (guard), not a specialist retriever.
+  This distinction is intentional — not all components are "agents"
+  in the same sense. Guards and synthesizers have different contracts.
 
 Azure equivalents:
   Reranker  → Azure AI Search semantic ranker (L2 neural)
@@ -38,6 +47,7 @@ from hr_data_models import (
     HRQueryPlan, RetrievedChunk, AgentResponse, ComplianceCheckResult,
     AgentName, QueryIntent
 )
+from agent_framework import BaseAgent
 from component_a_hr_indexing import load_index, INDEX_DIR
 from component_b_orchestrator_agent import orchestrator_agent
 from component_c_policy_data_agents import PolicyRAGAgent, DataQueryAgent
@@ -73,15 +83,15 @@ MANDATORY_CAVEATS = {
 # ═══════════════════════════════════════════════════════════════
 # ONBOARDING AGENT (specialist for new joiner queries)
 # ═══════════════════════════════════════════════════════════════
-class OnboardingAgent:
+class OnboardingAgent(BaseAgent):
     """
     Specialist agent for new employee onboarding questions.
-    Has a dedicated system prompt and retrieval scope focused
-    only on the onboarding guide — reduces hallucination risk.
+    Extends BaseAgent → registered in AgentRegistry, runs in parallel.
 
     Why specialist? New joiners ask procedural questions in
     uncertain language ("what do I do first?"). A general
     agent often over-retrieves from other policy domains.
+    Scoped to onboarding docs + structured checklist = higher accuracy.
     """
 
     ONBOARDING_CHECKLIST = {
@@ -112,9 +122,13 @@ class OnboardingAgent:
         ],
     }
 
-    def __init__(self, policy_agent: PolicyRAGAgent):
+    def __init__(self, policy_agent: "PolicyRAGAgent"):
         self.policy_agent = policy_agent
-        self.name         = AgentName.ONBOARDING
+        self._name        = AgentName.ONBOARDING
+
+    @property
+    def agent_name(self) -> AgentName:
+        return self._name
 
     def run(self, plan: HRQueryPlan) -> AgentResponse:
         """
@@ -160,7 +174,7 @@ class OnboardingAgent:
             combined = rag_resp.answer
 
         return AgentResponse(
-            agent       = self.name,
+            agent       = self._name,
             answer      = combined,
             sources     = rag_resp.sources + ["onboarding_checklist"],
             confidence  = 0.88,

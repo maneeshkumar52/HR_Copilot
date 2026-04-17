@@ -6,7 +6,7 @@ REM ============================================================
 echo.
 echo  ============================================================
 echo   HR Copilot -- Multi-Agent Setup -- Windows
-echo   MLDS 2026 -- Maneesh Kumar ^& Ravikiran Ravada
+echo   Maneesh Kumar
 echo  ============================================================
 echo.
 

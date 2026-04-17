@@ -2,7 +2,7 @@
 ============================================================
 COMPONENT B — OrchestratorAgent (Multi-Agent Router)
 ============================================================
-HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+HR Copilot · Maneesh Kumar 
 
 Use Case:
   An employee asks: "Can I work from home 4 days a week and
@@ -35,6 +35,7 @@ from typing import List, Optional
 from hr_data_models import (
     QueryIntent, AgentName, HRQueryPlan
 )
+from agent_framework import PlannerAgent
 
 OLLAMA_MODEL = "mistral"
 USE_OLLAMA   = True
@@ -361,6 +362,44 @@ def orchestrator_agent(question: str, use_llm: bool = USE_OLLAMA) -> HRQueryPlan
     for i, q in enumerate(plan.sub_queries, 1):
         print(f"    {i}. {q}")
     return plan
+
+
+# ─────────────────────────────────────────────────────────────
+# ORCHESTRATOR AGENT CLASS
+# Wraps the orchestrator functions as a PlannerAgent subclass.
+# Registered in AgentRegistry so the pipeline can discover it.
+# ─────────────────────────────────────────────────────────────
+class OrchestratorAgent(PlannerAgent):
+    """
+    PlannerAgent implementation for intent classification and routing.
+
+    Extends PlannerAgent (not BaseAgent) because its output is an
+    HRQueryPlan, not an AgentResponse. This is the first stage of
+    the pipeline — it PLANS the work for specialist agents to do.
+
+    Role in the multi-agent framework:
+        Employee Question
+              ↓
+        OrchestratorAgent.plan()        ← THIS CLASS
+              ↓ HRQueryPlan
+        ParallelAgentExecutor.execute() ← runs specialist agents
+              ↓ List[AgentResponse]
+        ComplianceGuardAgent.run()
+              ↓
+        ResponseSynthesizerAgent
+
+    Usage:
+        orchestrator = OrchestratorAgent()
+        plan = orchestrator.plan("What is my leave carry-forward?")
+        print(plan.intent, plan.agents_to_invoke)
+    """
+
+    def plan(self, question: str, use_llm: bool = USE_OLLAMA) -> HRQueryPlan:
+        """
+        Classify intent and build a routing plan for this question.
+        Delegates to the module-level orchestrator_agent() function.
+        """
+        return orchestrator_agent(question, use_llm=use_llm)
 
 
 # ─────────────────────────────────────────────────────────────

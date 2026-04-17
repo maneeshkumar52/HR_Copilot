@@ -1,0 +1,1038 @@
+================================================================================
+HR COPILOT — MASTER GENERATION PROMPT
+Multi-Agent Employee Self-Service System
+================================================================================
+
+Give this entire prompt to Claude Code (or any capable AI coding agent) in a
+fresh session. It will generate the complete, working HR Copilot multi-agent
+system from scratch, end-to-end, in exactly 6 phases.
+
+Each phase builds on the previous. Run each phase's verification command before
+moving to the next phase.
+
+================================================================================
+CONTEXT — What you are building
+================================================================================
+
+Build a production-grade multi-agent HR Copilot that answers employee HR
+questions using:
+  - A proper multi-agent framework (BaseAgent, AgentRegistry, ParallelAgentExecutor)
+  - Hybrid RAG retrieval (FAISS vector + BM25 keyword + RRF fusion)
+  - Parallel specialist agent execution (fan-out pattern)
+  - Cross-encoder reranking + NLI fact-checking
+  - POSH/legal compliance gate with hard blocking
+  - Local RAGAS evaluation (faithfulness, relevancy, context precision)
+  - Streamlit web UI with 5 tabs
+  - No external API keys required (runs fully locally)
+
+Tech stack: Python 3.10+, sentence-transformers, faiss-cpu, rank-bm25,
+transformers, pandas, streamlit, colorama, python-dotenv
+
+The system is built for a workshop to teach students multi-agent
+AI system design. Every file must have clear educational comments explaining
+the WHY behind each design decision.
+
+================================================================================
+PHASE 1 — Project Scaffold & Shared Contracts
+================================================================================
+
+TASK: Create the project directory structure and all shared files.
+
+1.1 Create this directory structure:
+    HR_Copilot/
+    ├── data/
+    │   ├── hr_docs/          (empty, populated in Phase 2)
+    │   ├── hr_structured/    (empty, populated in Phase 2)
+    │   ├── index/            (empty, populated at runtime)
+    │   └── eval/             (empty, populated at runtime)
+    ├── .env.example
+    ├── requirements.txt
+    ├── setup.sh
+    └── setup.bat
+
+1.2 Create requirements.txt with these dependencies:
+    faiss-cpu>=1.7.4
+    sentence-transformers>=2.7.0
+    transformers>=4.40.0
+    torch>=2.0.0
+    rank-bm25>=0.2.2
+    numpy>=1.24.0
+    pandas>=2.0.0
+    streamlit>=1.35.0
+    langchain-text-splitters>=0.2.0
+    tiktoken>=0.6.0
+    pypdf>=4.0.0
+    python-docx>=1.1.0
+    tqdm>=4.66.0
+    colorama>=0.4.6
+    python-dotenv>=1.0.0
+    tabulate>=0.9.0
+    datasets>=2.18.0
+
+1.3 Create .env.example:
+    # Local mode (default — no API keys needed)
+    USE_OLLAMA=true
+    OLLAMA_MODEL=mistral
+    EMBED_MODEL=all-MiniLM-L6-v2
+
+    # Azure production (uncomment to use)
+    # USE_AZURE=true
+    # AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
+    # AZURE_OPENAI_API_KEY=<key>
+    # AZURE_OPENAI_DEPLOYMENT=gpt-4o
+    # AZURE_SEARCH_ENDPOINT=https://<search>.search.windows.net/
+    # AZURE_SEARCH_KEY=<key>
+    # AZURE_SEARCH_INDEX=hr-knowledge-base
+
+1.4 Create setup.sh (Mac/Linux):
+    #!/bin/bash
+    set -e
+    echo "Setting up HR Copilot..."
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+    python create_sample_data.py
+    python component_a_hr_indexing.py
+    echo "Setup complete! Run: streamlit run hr_copilot_ui.py"
+
+1.5 Create hr_data_models.py with these exact typed dataclasses:
+
+    from dataclasses import dataclass, field
+    from typing import List, Dict, Optional
+    from enum import Enum
+
+    class QueryIntent(Enum):
+        LEAVE_POLICY   = "leave_policy"
+        COMPENSATION   = "compensation"
+        REMOTE_WORK    = "remote_work"
+        ONBOARDING     = "onboarding"
+        GRIEVANCE      = "grievance"
+        LEARNING       = "learning"
+        HEADCOUNT_DATA = "headcount_data"
+        SALARY_BAND    = "salary_band"
+        MULTI_DOMAIN   = "multi_domain"
+        UNKNOWN        = "unknown"
+
+    class AgentName(Enum):
+        ORCHESTRATOR = "OrchestratorAgent"
+        POLICY_RAG   = "PolicyRAGAgent"
+        DATA_QUERY   = "DataQueryAgent"
+        ONBOARDING   = "OnboardingAgent"
+        COMPLIANCE   = "ComplianceGuardAgent"
+
+    @dataclass
+    class HRQueryPlan:
+        original_question: str
+        intent:            QueryIntent  = QueryIntent.UNKNOWN
+        sub_queries:       List[str]    = field(default_factory=list)
+        agents_to_invoke:  List[AgentName] = field(default_factory=list)
+        priority_docs:     List[str]    = field(default_factory=list)
+        needs_structured:  bool         = False
+        reasoning:         str          = ""
+        confidence:        float        = 0.80
+
+    @dataclass
+    class RetrievedChunk:
+        chunk_id:    str
+        text:        str
+        source_file: str
+        category:    str
+        rrf_score:   float = 0.0
+        rerank_score:float = 0.0
+        entail_score:float = 0.0
+        verified:    bool  = False
+        agent_source:str   = ""
+
+    @dataclass
+    class AgentResponse:
+        agent:       AgentName
+        answer:      str
+        sources:     List[str]  = field(default_factory=list)
+        confidence:  float      = 0.0
+        chunks_used: int        = 0
+        data_used:   bool       = False
+        warnings:    List[str]  = field(default_factory=list)
+
+    @dataclass
+    class ComplianceCheckResult:
+        passes:           bool
+        confidence:       float
+        flags:            List[str]      = field(default_factory=list)
+        corrected_answer: Optional[str]  = None
+
+    @dataclass
+    class FinalHRResponse:
+        question:           str
+        answer:             str
+        sources:            List[str]
+        agents_contributed: List[str]
+        intent:             str
+        compliance_passed:  bool
+        faithfulness:       float = 0.0
+        answer_relevancy:   float = 0.0
+        context_precision:  float = 0.0
+        latency_ms:         float = 0.0
+        caveats:            List[str] = field(default_factory=list)
+
+VERIFY Phase 1:
+    python -c "from hr_data_models import HRQueryPlan, AgentResponse, FinalHRResponse; print('Phase 1 OK')"
+
+================================================================================
+PHASE 2 — Multi-Agent Framework + Knowledge Base
+================================================================================
+
+TASK: Build the framework backbone and index the HR knowledge base.
+
+2.1 Create agent_framework.py with these classes (all well-commented):
+
+    CLASSES TO IMPLEMENT:
+
+    class AgentStatus(Enum):
+        IDLE / RUNNING / COMPLETED / FAILED / UNREGISTERED
+
+    @dataclass
+    class AgentMessage:
+        sender: AgentName
+        recipient: Optional[AgentName]
+        payload: Any           # HRQueryPlan or AgentResponse
+        msg_type: str = "request"
+        timestamp: float = field(default_factory=time.time)
+        trace_id: str = ""
+
+    @dataclass
+    class AgentTask:
+        agent_name: AgentName
+        status: AgentStatus = AgentStatus.IDLE
+        result: Optional[AgentResponse] = None
+        error: Optional[str] = None
+        start_time: float = 0.0
+        end_time: float = 0.0
+
+        @property
+        def latency_ms(self) -> float:
+            return (self.end_time - self.start_time) * 1000 if self.end_time else 0.0
+
+    class BaseAgent(ABC):
+        # Abstract: agent_name property (returns AgentName enum)
+        # Abstract: run(plan: HRQueryPlan) -> AgentResponse
+        # Optional: initialize() -> None
+        # Optional: shutdown() -> None
+
+    class PlannerAgent(ABC):
+        # Abstract: plan(question: str, use_llm: bool) -> HRQueryPlan
+
+    class AgentRegistry:
+        # register(agent: BaseAgent) -> None  (calls agent.initialize())
+        # get(name: AgentName) -> Optional[BaseAgent]
+        # list_agents() -> List[AgentName]
+        # get_status(name) -> AgentStatus
+        # set_status(name, status) -> None
+        # shutdown_all() -> None
+        # Thread-safe: use threading.Lock()
+
+    class ParallelAgentExecutor:
+        SPECIALIST_AGENTS = {AgentName.POLICY_RAG, AgentName.DATA_QUERY, AgentName.ONBOARDING}
+
+        def execute(
+            self,
+            plan: HRQueryPlan,
+            agent_names: List[AgentName],
+            on_complete: Optional[Callable] = None
+        ) -> Tuple[List[AgentResponse], List[AgentTask]]:
+            # Use ThreadPoolExecutor with max_workers
+            # Submit agent.run(plan) for each specialist agent concurrently
+            # Collect with as_completed()
+            # Record start_time/end_time/status in AgentTask
+            # Return (responses sorted by confidence desc, task list)
+
+        def print_execution_summary(self, tasks: List[AgentTask]) -> None:
+            # Print ASCII bar chart of agent latencies
+
+    IMPORTANT DESIGN RULES FOR agent_framework.py:
+    - Import ONLY from hr_data_models (no component imports)
+    - Add a self-test in __main__ that creates a mock BaseAgent,
+      registers it, and verifies registry.get() works
+    - Include comments explaining WHY each class exists
+
+2.2 Create create_sample_data.py that generates:
+
+    data/hr_docs/leave_policy.md — with these sections:
+        ## Annual Leave (Privilege Leave)
+        24 working days per year for permanent employees
+        Carry-forward max: 8 days. Balance above 8 days lapses.
+        Encashment: up to 4 days per year only.
+
+        ## Sick Leave
+        12 days per year (non-accumulative, non-encashable)
+        Medical certificate required for > 3 consecutive days
+
+        ## Casual Leave
+        6 days per calendar year, max 3 consecutive days
+
+        ## Maternity Leave
+        26 weeks for first 2 children, 12 weeks for 3rd+
+        Adoption: 12 weeks
+
+        ## Paternity Leave
+        5 working days within 6 months of birth
+
+        ## Bereavement Leave
+        3 days immediate family, 1 day extended family
+
+        ## Carry-Forward Rules
+        Maximum carry-forward cap: 8 days. Any balance above 8 days lapses.
+        LWP (Leave Without Pay) allowed with manager approval.
+
+    data/hr_docs/compensation_benefits.md — with sections:
+        ## Salary Bands
+        B1 (Associate): ₹4L–₹7L CTC, 1 month notice, no ESOP
+        B2 (Senior Associate): ₹7L–₹12L CTC, 1 month notice, no ESOP
+        B3 (Senior Lead): ₹12L–₹20L CTC, 2 month notice, no ESOP
+        B4 (Manager / Sr Manager): ₹20L–₹35L CTC, 3 month notice, ESOP eligible
+        B5 (Director / Sr Director): ₹35L–₹60L CTC, 3 month notice, ESOP eligible
+        B6 (VP and above): ₹60L+ CTC, 3 month notice, ESOP eligible
+
+        ## Variable Pay
+        B1–B2: 10% of CTC, B3: 15%, B4: 20%, B5+: 25%+
+
+        ## Tax-Exempt Allowances
+        HRA, LTA, Medical reimbursement, Internet allowance
+
+        ## Performance Increments
+        Rating 1 (Outstanding): 20%+
+        Rating 2 (Exceeds): 12–18%
+        Rating 3 (Meets): 8–12%
+        Rating 4 (Below): 0–5%
+
+    data/hr_docs/remote_work_policy.md — with sections:
+        ## WFH Eligibility
+        Post-probation confirmed employees: up to 3 days WFH per week
+        Probation employees: minimum 4 days in office per week
+
+        ## Work From Abroad (WFA)
+        Maximum 30 days per year
+        Requires manager + HR approval 2 weeks in advance
+        Tax implications: employee's responsibility
+
+        ## Core Hours
+        All employees must be available 10:00 AM – 5:00 PM IST
+
+        ## Approval Process
+        Submit WFH schedule via HRMS by Friday for following week
+
+    data/hr_docs/onboarding_guide.md — with sections:
+        ## Pre-Joining Checklist
+        KYC documents, offer acceptance, bank details, IT asset request
+
+        ## Day 1 Activities
+        Laptop + access card, HR induction 9:30–12:30, health insurance enrollment
+
+        ## Week 1 Mandatory Training
+        POSH training (2 hrs online), Code of Conduct, Data Privacy
+
+        ## 30-60-90 Day Plan
+        30 days: shadow team; 60 days: first project; 90 days: full contribution
+
+    data/hr_docs/grievance_compliance.md — with sections:
+        ## Grievance Process
+        Step 1: Raise with manager, Step 2: HRBP, Step 3: HR Director, Step 4: Ethics hotline
+
+        ## POSH Policy
+        Company is committed to a harassment-free workplace.
+        ICC (Internal Complaints Committee) handles all POSH complaints.
+        Contact: icc@enterprise.com | Ethics Hotline: 1800-XXX-1234
+
+        ## Disciplinary Process
+        Verbal warning → Written warning → Final warning → Termination
+
+        ## Notice Periods by Band
+        B1–B2: 1 month, B3: 2 months, B4+: 3 months
+
+    data/hr_docs/learning_development.md — with sections:
+        ## Annual L&D Budget
+        B1–B2: ₹15,000/year, B3–B4: ₹25,000/year, B5+: ₹40,000/year
+
+        ## Eligible Expenses
+        AWS/Azure/GCP certifications, PMP, CFA, SHRM, external courses, conferences
+
+        ## Claim Process
+        Submit receipts via HRMS within 30 days of completion
+        Manager approval required for > ₹10,000
+
+        ## Clawback Policy
+        Courses > ₹10,000: 100% clawback if leaving within 6 months
+        Pro-rated clawback for 6–12 months tenure post-course
+
+        ## Unused Budget
+        Does not carry forward to next year
+
+    data/hr_structured/salary_bands.json:
+    {
+      "bands": [
+        {"band":"B1","title":"Associate","min_ctc":400000,"max_ctc":700000,"notice_period_months":1,"esop_eligible":false,"variable_pct":10},
+        {"band":"B2","title":"Senior Associate","min_ctc":700000,"max_ctc":1200000,"notice_period_months":1,"esop_eligible":false,"variable_pct":10},
+        {"band":"B3","title":"Senior Lead","min_ctc":1200000,"max_ctc":2000000,"notice_period_months":2,"esop_eligible":false,"variable_pct":15},
+        {"band":"B4","title":"Manager / Sr Manager","min_ctc":2000000,"max_ctc":3500000,"notice_period_months":3,"esop_eligible":true,"variable_pct":20},
+        {"band":"B5","title":"Director / Sr Director","min_ctc":3500000,"max_ctc":6000000,"notice_period_months":3,"esop_eligible":true,"variable_pct":25},
+        {"band":"B6","title":"VP and above","min_ctc":6000000,"max_ctc":15000000,"notice_period_months":3,"esop_eligible":true,"variable_pct":30}
+      ]
+    }
+
+    data/hr_structured/headcount.csv:
+    department,headcount,open_positions,attrition_ytd,avg_tenure_years
+    Engineering,342,18,24,3.2
+    Product,87,5,6,2.8
+    Sales,145,12,18,2.1
+    HR,34,2,3,4.5
+    Finance,56,3,4,5.1
+    Operations,78,4,7,3.8
+    Marketing,45,3,5,2.9
+    Legal,23,1,2,6.2
+    Customer Success,67,6,8,2.5
+
+2.3 Create component_a_hr_indexing.py:
+
+    CONSTANTS:
+    INDEX_DIR = "data/index"
+    EMBED_MODEL = "all-MiniLM-L6-v2"
+    CHUNK_SIZE = 300   # words
+    CHUNK_OVERLAP = 100  # words
+
+    HR_CATEGORY_MAP = {
+        "leave_policy": "leave",
+        "compensation_benefits": "compensation",
+        "remote_work_policy": "remote_work",
+        "onboarding_guide": "onboarding",
+        "grievance_compliance": "grievance",
+        "learning_development": "learning",
+    }
+
+    FUNCTIONS TO IMPLEMENT:
+    load_hr_documents(docs_dir) -> List[Dict]
+        Load .md files, infer category from filename via HR_CATEGORY_MAP
+
+    chunk_hr_document(text, doc_meta) -> List[Dict]
+        Split on "\n## " and "\n### " boundaries
+        Each chunk: {chunk_id, text, source_file, category, char_count}
+
+    chunk_all_documents(docs) -> List[Dict]
+        Call chunk_hr_document for each doc
+
+    generate_embeddings(chunks) -> Tuple[np.ndarray, SentenceTransformer]
+        Use all-MiniLM-L6-v2 with normalize_embeddings=True
+
+    build_faiss_index(vectors) -> faiss.Index
+        Use IndexFlatIP (inner product = cosine with normalized vectors)
+
+    build_bm25_index(chunks) -> BM25Okapi
+        Tokenize on whitespace+punctuation
+
+    save_index(chunks, faiss_index, bm25, index_dir=INDEX_DIR)
+        Save: hr_faiss.index (faiss.write_index), hr_bm25.pkl (pickle), hr_chunks.json
+
+    load_index(index_dir) -> Tuple[List[Dict], faiss.Index, BM25Okapi, SentenceTransformer]
+        Load all 3 artifacts + initialize embedding model
+
+    __main__ block: load docs, chunk, embed, build indexes, save, test query
+    Print: "COMPONENT A COMPLETE ✅ | Run next: python component_b_orchestrator_agent.py"
+
+VERIFY Phase 2:
+    python agent_framework.py        # should print self-test OK
+    python create_sample_data.py     # generates data/ files
+    python component_a_hr_indexing.py  # prints "COMPONENT A COMPLETE ✅"
+
+================================================================================
+PHASE 3 — OrchestratorAgent + Specialist Retrieval Agents
+================================================================================
+
+TASK: Build the routing brain and the two specialist retrieval agents.
+
+3.1 Create component_b_orchestrator_agent.py:
+
+    IMPORTS: import re, json; from agent_framework import PlannerAgent
+
+    CONSTANTS:
+    OLLAMA_MODEL = "mistral"
+    USE_OLLAMA = True
+
+    ROUTING_TABLE (dict mapping QueryIntent → List[AgentName]):
+        LEAVE_POLICY   → [POLICY_RAG, COMPLIANCE]
+        COMPENSATION   → [POLICY_RAG, DATA_QUERY, COMPLIANCE]
+        REMOTE_WORK    → [POLICY_RAG, COMPLIANCE]
+        ONBOARDING     → [ONBOARDING, COMPLIANCE]
+        GRIEVANCE      → [POLICY_RAG, COMPLIANCE]
+        LEARNING       → [POLICY_RAG]
+        HEADCOUNT_DATA → [DATA_QUERY]
+        SALARY_BAND    → [DATA_QUERY, COMPLIANCE]
+        MULTI_DOMAIN   → [POLICY_RAG, DATA_QUERY, ONBOARDING, COMPLIANCE]
+        UNKNOWN        → [POLICY_RAG, COMPLIANCE]
+
+    PRIORITY_DOCS_MAP (dict mapping QueryIntent → List[str]):
+        Maps intent to category strings matching HR_CATEGORY_MAP values
+
+    NEEDS_STRUCTURED_DATA = {HEADCOUNT_DATA, SALARY_BAND, COMPENSATION, MULTI_DOMAIN}
+
+    INTENT_KEYWORDS (dict mapping QueryIntent → regex pattern):
+        LEAVE_POLICY   → r"\b(leave|sick leave|carry.forward|maternity|paternity|encash)\b"
+        COMPENSATION   → r"\b(salary|ctc|increment|bonus|allowance|esop|variable|appraisal)\b"
+        REMOTE_WORK    → r"\b(work from home|wfh|remote|hybrid|wfa|core hours)\b"
+        ONBOARDING     → r"\b(onboard|joining|day 1|first day|induction|offer letter)\b"
+        GRIEVANCE      → r"\b(grievance|complaint|posh|harassment|pip|termination|notice)\b"
+        LEARNING       → r"\b(training|l&d|certification|reimburs|clawback|course)\b"
+        HEADCOUNT_DATA → r"\b(headcount|attrition|employees|team size|open positions)\b"
+        SALARY_BAND    → r"\b(salary band|pay band|band [b1-6]|salary range)\b"
+
+    FUNCTIONS:
+    classify_intent_rules(question) -> QueryIntent
+        Count regex matches per intent. If ≥3 match → MULTI_DOMAIN.
+        Return intent with highest match count. No match → UNKNOWN.
+
+    decompose_query_rules(question, intent) -> List[str]
+        Split on " and also ", " as well as ", conditional "if X, Y" patterns
+        For MULTI_DOMAIN: extract sub-questions per detected domain
+        Return [question] if no decomposition possible
+
+    get_priority_docs_for_subquery(sub_question, main_intent) -> List[str]
+        Map sub-question keywords to HR categories
+
+    orchestrate_with_llm(question) -> Optional[HRQueryPlan]
+        Call ollama.chat(model=OLLAMA_MODEL) with structured JSON system prompt
+        Parse JSON response → HRQueryPlan. Return None on any error.
+
+    orchestrate_rules(question) -> HRQueryPlan
+        Pure rule-based: classify_intent_rules + decompose_query_rules + ROUTING_TABLE
+
+    orchestrator_agent(question, use_llm=USE_OLLAMA) -> HRQueryPlan
+        Try LLM first, fall back to rules. Print routing decision.
+
+    class OrchestratorAgent(PlannerAgent):
+        def plan(self, question, use_llm=USE_OLLAMA) -> HRQueryPlan:
+            return orchestrator_agent(question, use_llm=use_llm)
+
+    __main__ block: test 6 routing scenarios, print results
+    Print: "COMPONENT B COMPLETE ✅ | Run next: python component_c_policy_data_agents.py"
+
+3.2 Create component_c_policy_data_agents.py:
+
+    IMPORTS: from agent_framework import BaseAgent
+
+    CONSTANTS:
+    TOP_K_VEC = 9, TOP_K_BM25 = 7, TOP_K_RRF = 6, RRF_K = 60
+
+    class PolicyRAGAgent(BaseAgent):
+        @property
+        def agent_name(self) -> AgentName: return AgentName.POLICY_RAG
+
+        _vector_search(query, category_filter, top_k=TOP_K_VEC) -> List[Tuple[int, float]]
+            FAISS inner product search with TWO-PASS category filter:
+            Pass 1: collect chunks from priority category
+            Pass 2: backfill from other categories if needed
+            Return merged[:top_k]
+
+        _bm25_search(query, category_filter, top_k=TOP_K_BM25) -> List[Tuple[int, float]]
+            BM25 search with same two-pass category filter
+
+        _rrf_fusion(vec_results, bm25_results, k=RRF_K) -> List[Tuple[int, float]]
+            RRF formula: score[idx] += 1.0 / (k + rank)
+            Apply to both vec_results and bm25_results
+            Return sorted by score descending
+
+        _infer_category_for_subquery(sub_question) -> Optional[List[str]]
+            Map ESOP→compensation, leave→leave, notice→compensation,
+            remote→remote_work, onboard→onboarding, posh→grievance,
+            learning→learning. Return None if no match.
+
+        retrieve(sub_query, plan, top_k=TOP_K_RRF) -> List[RetrievedChunk]
+            For MULTI_DOMAIN: use _infer_category_for_subquery
+            Otherwise: use plan.priority_docs
+            Run _vector_search + _bm25_search + _rrf_fusion
+            Return List[RetrievedChunk] with all scores populated
+
+        run(plan) -> AgentResponse
+            For each sub_query in plan.sub_queries: call retrieve()
+            Deduplicate by chunk_id (boost rrf_score for cross-query hits)
+            Sort by rrf_score desc, keep top 8
+            Format raw answer from top-4 chunks with source citations
+            Return AgentResponse with sources, confidence=deduped[0].rrf_score
+
+    class DataQueryAgent(BaseAgent):
+        @property
+        def agent_name(self) -> AgentName: return AgentName.DATA_QUERY
+
+        DATA_DIR = "data/hr_structured"
+
+        _load_salary_bands() -> dict
+            Lazy load salary_bands.json
+
+        _load_headcount() -> DataFrame
+            Lazy load headcount.csv via pandas
+
+        query_salary_bands(question) -> str
+            Extract band number (B1-B6) or title keyword from question
+            Return formatted band details. If no match: return full band table.
+
+        query_headcount(question) -> str
+            Department-specific lookup, company-wide summary, attrition sort
+            Return formatted table with source citation
+
+        run(plan) -> AgentResponse
+            Route sub_queries to query_salary_bands or query_headcount
+            Detect keywords: "salary","ctc","band" → salary_bands
+                             "headcount","attrition","employees" → headcount
+            Return AgentResponse(data_used=True, confidence=0.92)
+
+    __main__ block: test PolicyRAG + DataQuery on 5 questions
+    Print: "COMPONENT C COMPLETE ✅ | Run next: python component_d_compliance_guard.py"
+
+VERIFY Phase 3:
+    python component_b_orchestrator_agent.py  # 6 routing scenarios print ✅
+    python component_c_policy_data_agents.py  # chunks retrieved per query
+
+================================================================================
+PHASE 4 — OnboardingAgent + ComplianceGuardAgent
+================================================================================
+
+TASK: Build the onboarding specialist and the 3-stage compliance pipeline.
+
+4.1 Create component_d_compliance_guard.py:
+
+    IMPORTS: from agent_framework import BaseAgent
+
+    CONSTANTS:
+    RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
+    NLI_MODEL = "cross-encoder/nli-deberta-v3-small"
+    RERANK_THRESH = 0.0
+    NLI_THRESH = 0.40
+
+    SENSITIVE_PATTERNS = {
+        "termination": r"\b(terminat|dismiss|fired|sacked|let go|end of employment)\b",
+        "posh":        r"\b(posh|sexual harassment|inappropriate|misconduct)\b",
+        "pip":         r"\b(pip|performance improvement|underperform|poor performance)\b",
+        "legal":       r"\b(sue|lawsuit|legal action|labour court|tribunal|whistleblow)\b",
+        "salary_cut":  r"\b(salary cut|pay cut|reduce salary|ctc reduction|demotion)\b",
+    }
+
+    MANDATORY_CAVEATS = {
+        "termination": "⚠️ For termination-related matters, consult your HRBP and Legal team.",
+        "posh":        "⚠️ POSH matters are strictly confidential. Contact the Internal Complaints Committee (ICC) at icc@enterprise.com.",
+        "pip":         "ℹ️ PIP process involves HR, your manager, and the employee. Contact your HRBP.",
+        "legal":       "⚠️ For legal disputes, always consult the Legal & Compliance team.",
+        "salary_cut":  "ℹ️ Salary adjustments require HR Director approval. Discuss with your HRBP.",
+    }
+
+    class OnboardingAgent(BaseAgent):
+        @property
+        def agent_name(self) -> AgentName: return AgentName.ONBOARDING
+
+        ONBOARDING_CHECKLIST = {
+            "pre_joining": [...list of pre-joining tasks...],
+            "day_1":       [...list of Day 1 tasks...],
+            "week_1":      [...list of Week 1 mandatory training...],
+            "first_90_days": [...30/60/90 day plan...],
+        }
+
+        def __init__(self, policy_agent: PolicyRAGAgent):
+            self.policy_agent = policy_agent
+            self._name = AgentName.ONBOARDING
+
+        run(plan) -> AgentResponse
+            Create scoped onboarding_plan with priority_docs=["onboarding"]
+            Call policy_agent.run(onboarding_plan)
+            Detect keywords: "first day","day 1" → day_1 checklist
+                             "document","submit" → pre_joining checklist
+                             "90 day","first month" → first_90_days
+                             "week 1","first week" → week_1
+            Merge RAG answer + checklist
+            Return AgentResponse(confidence=0.88)
+
+    class ComplianceGuardAgent:
+        # NOTE: Does NOT extend BaseAgent — different interface
+        # Input: (question, chunks, agent_response)
+        # Output: (verified_chunks, ComplianceCheckResult)
+
+        def __init__(self):
+            self._reranker = None
+            self._nli = None
+
+        _load_reranker() -> CrossEncoder
+            Lazy load RERANK_MODEL
+
+        _load_nli() -> pipeline
+            Lazy load NLI_MODEL using hf_pipeline("text-classification")
+
+        rerank(question, chunks, threshold=RERANK_THRESH) -> List[RetrievedChunk]
+            Create (question, chunk.text[:512]) pairs
+            Score with cross-encoder
+            Filter by threshold, sort by score desc, return top-8
+            Set chunk.rerank_score for each
+
+        fact_check(question, chunks) -> List[RetrievedChunk]
+            For each chunk: nli_input = f"{chunk.text[:400]} [SEP] {question}"
+            Parse NLI output: label "2" or "ENTAIL" → entailment score
+            chunk.verified = True if entailment >= NLI_THRESH
+            Return verified chunks. Fallback: return top-3 if none pass.
+
+        compliance_scan(question, answer) -> ComplianceCheckResult
+            Scan question + answer against SENSITIVE_PATTERNS
+            Add caveats for each match
+            SPECIAL RULE: if "posh" in flags AND question contains
+            r"\b(file|lodge|register|report|raise)\b.*\b(complaint|harassment)\b"
+            → passes=False, corrected_answer = ICC contact message
+
+        run(question, chunks, agent_response) -> Tuple[List[RetrievedChunk], ComplianceCheckResult]
+            reranked = rerank(question, chunks)
+            verified = fact_check(question, reranked)
+            raw_ans = agent_response.answer if agent_response else join chunk texts
+            compliance = compliance_scan(question, raw_ans)
+            return verified, compliance
+
+    __main__ block: test 4 scenarios including POSH complaint
+    Print: "COMPONENT D COMPLETE ✅ | Run next: python component_e_response_synthesizer.py"
+
+VERIFY Phase 4:
+    python component_d_compliance_guard.py
+    # Should show: passes=True, passes=False (POSH complaint), flags=['posh','pip']
+
+================================================================================
+PHASE 5 — Response Synthesizer + RAGAS Evaluation
+================================================================================
+
+TASK: Build synthesis (LLM + template fallback) and RAGAS quality evaluation.
+
+5.1 Create component_e_response_synthesizer.py:
+
+    CONSTANTS:
+    OLLAMA_MODEL = "mistral"
+    USE_OLLAMA = True
+    FAITHFULNESS_GATE = 0.80
+    RELEVANCY_WARN = 0.68
+    EMBED_MODEL = "all-MiniLM-L6-v2"
+
+    FORMAT_HINTS (dict mapping QueryIntent → instruction string):
+        LEAVE_POLICY   → "Give exact number of days. Use bullets for multiple leave types."
+        COMPENSATION   → "Present numbers clearly. Use table if comparing bands."
+        REMOTE_WORK    → "List eligibility conditions and approval steps clearly."
+        ONBOARDING     → "Use numbered checklist by timeline (pre-joining / Day 1 / Week 1)."
+        GRIEVANCE      → "Explain step by step. Include ICC contact. Be careful and accurate."
+        LEARNING       → "State budget amount, eligible certifications, and claim process."
+        HEADCOUNT_DATA → "Present data as table with totals and percentages."
+        SALARY_BAND    → "Present salary ranges with ₹ currency. Note ESOP conditions."
+        MULTI_DOMAIN   → "Address each part with clear headers. Cite relevant policy."
+        UNKNOWN        → "Answer accurately from context. Be concise."
+
+    SYNTHESIS_SYSTEM = """You are HR Copilot for Enterprise Corp.
+    RULES: Answer ONLY from provided context. Never fabricate numbers.
+    If insufficient context: "I don't have enough information. Contact your HRBP."
+    Cite sources as [Policy: filename]. Keep answers focused and concise.
+    Every sentence must directly address the question.
+    {format_hint}"""
+
+    FUNCTIONS:
+
+    _merge_agent_responses(agent_responses, compliance, question) -> str
+        If compliance.corrected_answer → return it directly (POSH block)
+        Concatenate agent answers with [AgentName — Source N] labels
+        Truncate each to 800 chars
+
+    synthesize_with_ollama(question, context, intent) -> str
+        Call ollama.chat with SYNTHESIS_SYSTEM + FORMAT_HINTS[intent]
+        Temperature=0.1
+
+    _extract_relevant_lines(question, chunks, max_lines=14) -> str
+        Extract question keywords (excluding stopwords)
+        Phase 1: find sections whose headers contain question keywords
+        Phase 2: fallback to top-2 chunks with ## headers → **bold**
+        Return clean text
+
+    synthesize_template(question, agent_responses, compliance, verified_chunks, intent) -> str
+        If compliance.corrected_answer → return it
+        For HEADCOUNT_DATA, SALARY_BAND: return best.answer directly
+        For ONBOARDING: return OnboardingAgent response if present
+        Otherwise: call _extract_relevant_lines from verified_chunks
+        Append source citations
+
+    synthesizer_agent(question, plan, agent_responses, verified_chunks, compliance) -> FinalHRResponse
+        If compliance.corrected_answer and not passes → return blocked response
+        Otherwise: try synthesize_with_ollama, fallback to synthesize_template
+        Append compliance caveats from MANDATORY_CAVEATS
+        Return FinalHRResponse
+
+    RAGAS EVALUATION FUNCTIONS:
+
+    _cosine(a, b) -> float
+        dot(a,b) / (norm(a) * norm(b))
+
+    evaluate_faithfulness(answer, verified_chunks, nli_model) -> float
+        Split answer into sentences (split on ". ")
+        For each sentence: NLI check against context (top-4 chunks joined)
+        entailment score ≥ 0.45 → counts as faithful
+        Return faithful_count / total_sentences
+
+    evaluate_relevancy(question, answer, embed_model) -> float
+        Cosine similarity of question and answer embeddings
+        Scale: max(0, min(1, (sim - 0.15) / 0.65))
+
+    evaluate_context_precision(answer, verified_chunks) -> float
+        For structured sources (salary_bands.json, headcount.csv in answer) → return 1.0
+        For policy chunks: count chunks whose source_file or text 4-grams appear in answer
+        Return used / total. Boost to 0.85 if structured source cited.
+
+    evaluate_response(hr_response, verified_chunks, nli_model, embed_model) -> FinalHRResponse
+        Compute all 3 RAGAS metrics, update hr_response fields, print results
+        Print Gate: PASS ✅ if faithfulness >= 0.80
+
+    from component_d_compliance_guard import MANDATORY_CAVEATS  # import at bottom
+
+    __main__ block: run 5 questions end-to-end, print eval summary
+    Print CI/CD gate result. sys.exit(0 if gate else 1)
+    Print: "COMPONENT E COMPLETE ✅ | Run end-to-end: python hr_copilot_pipeline.py"
+
+VERIFY Phase 5:
+    python component_e_response_synthesizer.py
+    # Should print 5 questions with RAGAS scores, avg faithfulness, CI/CD gate PASS
+
+================================================================================
+PHASE 6 — Pipeline CLI + Streamlit UI + Documentation
+================================================================================
+
+TASK: Wire everything together, build the CLI pipeline, Streamlit UI, and docs.
+
+6.1 Create hr_copilot_pipeline.py with class HRCopilotPipeline:
+
+    ARCHITECTURE:
+        The pipeline uses AgentRegistry + ParallelAgentExecutor from agent_framework.py
+        All specialist agents are registered before first use.
+        Parallel fan-out for specialist agents, then sequential compliance + synthesis.
+
+    def __init__(self, verbose=True):
+        Store verbose flag
+        Initialize all component references to None (lazy loading)
+        self._registry = None
+        self._executor = None
+        self._orchestrator = None
+
+    def _ensure_loaded(self):
+        Load index, instantiate all agents, register in AgentRegistry
+        # Step 1: load_index()
+        # Step 2: Instantiate PolicyRAGAgent, DataQueryAgent, ComplianceGuardAgent, OnboardingAgent
+        # Step 3: registry.register(policy), registry.register(data), registry.register(onboarding)
+        # Step 4: executor = ParallelAgentExecutor(registry, max_workers=4)
+        # Step 5: orchestrator = OrchestratorAgent()
+        Print registry contents on success
+
+    def build_index(self, docs_dir="data/hr_docs"):
+        Call component_a functions to rebuild FAISS + BM25 index
+
+    def ask(self, question, use_llm=True) -> dict:
+        STAGE B: orchestrator.plan(question)
+        STAGE C: executor.execute(plan, plan.agents_to_invoke)
+                 Also collect raw chunks from PolicyRAGAgent for compliance
+        STAGE D: compliance.run(question, retrieved_chunks, first_response)
+        STAGE E: synthesizer_agent() → evaluate_response()
+        Return dict with: question, answer, sources, agents, intent,
+                          compliance_passed, caveats, faithfulness,
+                          answer_relevancy, context_precision, latency_ms,
+                          agent_trace (list of {agent, status, latency_ms})
+
+    def print_result(self, result):
+        Pretty-print answer, sources, agents, RAGAS scores, agent trace
+        Color-code with colorama (green=pass, yellow=warn, red=fail)
+
+    def run_eval_suite(self, gate=False) -> bool:
+        Run 6 predefined HR questions:
+          1. Annual leave carry-forward
+          2. Salary band for Band 3 Senior Lead
+          3. WFH 3 days/week post-probation
+          4. First week as new employee
+          5. Highest attrition department + total headcount
+          6. L&D budget + remote work for Band 2
+        Print summary: avg faithfulness, avg relevancy, avg latency
+        Save JSON report to data/eval/eval_suite_report.json
+        If gate=True: sys.exit(0 if passed else 1)
+
+    def interactive(self):
+        Loop: input → ask() → print_result(). Exit on "quit"/"exit"/Ctrl+C
+
+    main() function with argparse:
+        --build-index: rebuild index
+        --eval: run eval suite
+        --gate: CI/CD gate mode
+        --question "...": single question mode
+        --quiet: suppress verbose
+        Default: run 3 demo queries then interactive mode
+
+6.2 Create hr_copilot_ui.py (Streamlit):
+
+    5 TABS:
+
+    Tab 1 — 💬 Chat:
+        Text input: "Ask your HR question..."
+        On submit: call pipeline.ask(question)
+        Show: answer in markdown, agent badges (colored pills),
+              RAGAS metric pills (green/yellow/red by threshold),
+              source citations, compliance status, agent trace table
+
+    Tab 2 — 🎯 Scenarios:
+        40 pre-built questions organized by 8 categories:
+        Leave (5), Compensation (5), Remote Work (5), L&D (5),
+        POSH Hard Block (4), POSH Caveat (2), Termination/Legal (9),
+        Multi-domain (5), Out-of-scope (2)
+        Each as a clickable button that populates chat and runs
+
+    Tab 3 — 📊 Eval Suite:
+        Button to run 6-question RAGAS eval suite
+        Show table: question, faithfulness, relevancy, precision
+        Show avg scores + CI/CD gate result (PASS green / FAIL red)
+
+    Tab 4 — 📚 Knowledge Base:
+        Browse HR policy documents by category
+        Show salary bands as sortable table
+        Show headcount by department as bar chart
+
+    Tab 5 — 🏗️ Architecture:
+        ASCII pipeline diagram (same as in README)
+        Table of all agents with their roles and framework class
+        Explanation of multi-agent framework components
+
+    SIDEBAR:
+        Show pipeline status (loaded / not loaded)
+        Agent registry contents
+        Framework version
+
+6.3 Create README.md (student-facing):
+
+    Sections:
+    1. What Is a Multi-Agent System? (with comparison table)
+    2. Quick Start — 3 commands
+    3. Project Structure (tree with annotations)
+    4. Multi-Agent Framework (BaseAgent, AgentRegistry, ParallelAgentExecutor with code)
+    5. Component-by-Component Walkthrough (A through E with flow diagrams)
+    6. How All Agents Work Together (end-to-end example)
+    7. CLI Commands
+    8. 40 Sample Questions
+    9. Key Concepts Reference table
+    10. Troubleshooting table
+
+6.4 Create WORKSHOP_GUIDE.md (instructor/student build guide):
+
+    Sections:
+    1. Problem Statement
+    2. Phase 0: Multi-Agent Framework (build this first)
+    3. Component A through E (what to build + key design decisions)
+    4. Challenge Exercises per component (3 per component)
+    5. Edge/Failure Cases per component (5 per component)
+    6. Build Order + Run Commands
+    7. Local vs Azure Production comparison table
+    8. Common Pitfalls table
+    9. Consolidated Challenge List with difficulty ratings
+
+VERIFY Phase 6:
+    python agent_framework.py                       # Framework self-test
+    python component_a_hr_indexing.py               # ✅ 109 chunks
+    python component_b_orchestrator_agent.py        # ✅ 6 scenarios
+    python component_c_policy_data_agents.py        # ✅ chunks retrieved
+    python component_d_compliance_guard.py          # ✅ POSH blocked
+    python component_e_response_synthesizer.py      # ✅ RAGAS gate PASS
+    python hr_copilot_pipeline.py --eval            # ✅ 6-question suite
+    streamlit run hr_copilot_ui.py &                # Opens localhost:8501
+    python hr_copilot_pipeline.py --question "What is the carry-forward limit for annual leave?"
+
+================================================================================
+FINAL SYSTEM VERIFICATION
+================================================================================
+
+After all 6 phases, run this comprehensive verification:
+
+1. Framework test:
+   python -c "
+   from agent_framework import BaseAgent, AgentRegistry, ParallelAgentExecutor
+   from hr_data_models import AgentName, HRQueryPlan, AgentResponse
+   from component_b_orchestrator_agent import OrchestratorAgent
+   orch = OrchestratorAgent()
+   plan = orch.plan('What is my leave carry-forward?', use_llm=False)
+   assert plan.intent.value == 'leave_policy'
+   print('Framework test PASSED')
+   "
+
+2. Parallel execution test:
+   python -c "
+   from hr_copilot_pipeline import HRCopilotPipeline
+   p = HRCopilotPipeline()
+   result = p.ask('What is the salary band for Band 3 and my L&D options?', use_llm=False)
+   assert result['intent'] == 'multi_domain'
+   assert len(result['agent_trace']) >= 2
+   print(f'Parallel test PASSED — {len(result[\"agent_trace\"])} agents ran')
+   "
+
+3. Compliance block test:
+   python -c "
+   from hr_copilot_pipeline import HRCopilotPipeline
+   p = HRCopilotPipeline()
+   result = p.ask('I want to file a POSH complaint against my manager.', use_llm=False)
+   assert result['compliance_passed'] == False
+   print('POSH block test PASSED')
+   "
+
+4. RAGAS gate test:
+   python hr_copilot_pipeline.py --eval --gate
+   # Exit code 0 = faithfulness >= 0.80 PASS
+
+================================================================================
+WHAT WORKING LOOKS LIKE
+================================================================================
+
+When you run: python hr_copilot_pipeline.py --question "What is the carry-forward limit?"
+
+Expected output:
+  [Registry] ✅ Registered: <PolicyRAGAgent[PolicyRAGAgent]>
+  [Registry] ✅ Registered: <DataQueryAgent[DataQueryAgent]>
+  [Registry] ✅ Registered: <OnboardingAgent[OnboardingAgent]>
+  ✅ Multi-agent framework ready — agents will run in parallel
+
+  B: OrchestratorAgent — Intent: leave_policy
+  C: ParallelAgentExecutor — Launching 1 agents: ['PolicyRAGAgent']
+     ✅ PolicyRAGAgent completed in ~150ms
+  D: ComplianceGuardAgent — Verified: 4 chunks | passes=True | flags=[]
+  E: Synthesizer — answer generated
+     Faithfulness: 1.00 ✅  Relevancy: 0.82 ✅  Precision: 0.75
+
+  Answer: "The maximum annual leave carry-forward cap is 8 days. Any unused
+           leave above 8 days lapses at year end. Encashment is allowed up
+           to 4 days per year. Source: leave_policy.md"
+
+================================================================================
+NOTES FOR THE GENERATING AGENT
+================================================================================
+
+1. Every Python file must have a module-level docstring explaining:
+   - What it does
+   - Which framework classes it uses
+   - Azure production equivalents
+   - How to run it standalone
+
+2. Every agent class must have a docstring explaining:
+   - Why this agent exists (what problem it solves)
+   - How it fits into the multi-agent framework
+   - Its interface (input → output types)
+
+3. Include print statements at module import time (educational — shows loading order):
+   print("=" * 60)
+   print("  COMPONENT X — [Name]")
+   print("=" * 60)
+
+4. Every component must end with:
+   print("COMPONENT X COMPLETE ✅")
+   print("Run next: python component_y.py")
+
+5. Use colorama for colored CLI output where applicable.
+
+6. The system must work end-to-end WITHOUT Ollama/any LLM (template fallback).
+
+7. All file paths must use os.path.join or forward slashes for cross-platform.
+
+8. RAGAS evaluation must run without any external API keys.
+
+================================================================================
+END OF MASTER PROMPT
+================================================================================

@@ -2,7 +2,7 @@
 ============================================================
 COMPONENT A — HR Knowledge Base Indexing
 ============================================================
-HR Copilot · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+HR Copilot · Maneesh Kumar 
 
 Use Case:
   Build the searchable knowledge base from 6 HR policy

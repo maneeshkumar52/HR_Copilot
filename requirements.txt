@@ -1,6 +1,6 @@
 # ============================================================
 # HR Copilot — Multi-Agent Employee Self-Service System
-# WS01 · MLDS 2026 · Maneesh Kumar & Ravikiran Ravada
+# Maneesh Kumar
 # ============================================================
 # Python 3.10+ required
 # Install: pip install -r requirements.txt
