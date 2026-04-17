@@ -369,37 +369,221 @@ class FinalHRResponse:
 
 ---
 
-## Quick Start
+## Running the Application
+
+### Step 1 — Install dependencies (one-time, ~5 min)
 
 ```bash
 # Mac / Linux
 chmod +x setup.sh && ./setup.sh
 source .venv/bin/activate
-python hr_copilot_pipeline.py --build-index     # one-time index build
 
 # Windows
 .\setup.bat
 .venv\Scripts\activate
+```
+
+```
+Installing dependencies from requirements.txt...
+  ✅  sentence-transformers   installed
+  ✅  faiss-cpu               installed
+  ✅  rank-bm25               installed
+  ✅  transformers            installed
+  ✅  streamlit               installed
+  ✅  colorama                installed
+Setup complete. Activate: source .venv/bin/activate
+```
+
+---
+
+### Step 2 — Build the Knowledge Base Index (one-time)
+
+```bash
 python hr_copilot_pipeline.py --build-index
 ```
 
-**CLI:**
-```bash
-python hr_copilot_pipeline.py                           # demo + interactive
-python hr_copilot_pipeline.py --question "..."          # single query
-python hr_copilot_pipeline.py --eval                    # RAGAS eval suite
-python hr_copilot_pipeline.py --eval --gate             # CI/CD gate (exit 1 on fail)
-streamlit run hr_copilot_ui.py                          # web UI (localhost:8501)
+```
+────────────────────────────────────────────────────────────
+  Building HR Knowledge Base Index
+────────────────────────────────────────────────────────────
+  Loading model: all-MiniLM-L6-v2
+  Total HR documents: 6
+  Total chunks: 109
+    [compensation]:   18 chunks
+    [grievance    ]:  19 chunks
+    [learning     ]:  20 chunks
+    [leave        ]:  18 chunks
+    [onboarding   ]:  17 chunks
+    [remote_work  ]:  17 chunks
+  ✅  FAISS index saved: data/index/hr_faiss.index
+  ✅  BM25 index saved:  data/index/hr_bm25.pkl
+  ✅  Index built: 109 chunks from 6 HR policy documents
+Index built. Run without --build-index to start.
 ```
 
-**Run components individually:**
+---
+
+### Step 3 — Ask a Single Question
+
+```bash
+python hr_copilot_pipeline.py --question "What is the maternity leave policy?"
+```
+
+```
+  ╔══════════════════════════════════════════════════════╗
+  ║   HR Copilot — Multi-Agent Employee Self-Service    ║
+  ║   Multi-Agent Framework · Maneesh Kumar             ║
+  ╚══════════════════════════════════════════════════════╝
+  Framework: AgentRegistry + ParallelAgentExecutor
+
+────────────────────────────────────────────────────────────
+  Loading HR Copilot — Multi-Agent Framework
+────────────────────────────────────────────────────────────
+  ✅  Knowledge base: 109 chunks indexed
+  ✅  Registry: AgentRegistry(3 agents: policy_rag, data_query, onboarding)
+  ✅  Multi-agent framework ready — agents will run in parallel
+
+────────────────────────────────────────────────────────────
+  B: OrchestratorAgent — Intent Classification & Routing
+────────────────────────────────────────────────────────────
+  ✅  Intent:  LEAVE_POLICY
+  ✅  Agents:  ['policy_rag']
+  ✅  Sub-Qs:  1
+
+────────────────────────────────────────────────────────────
+  C: Specialist Agents — Parallel Execution (Fan-Out)
+────────────────────────────────────────────────────────────
+  [ParallelExecutor] Launching 1 agent...
+  [ParallelExecutor] ✅ PolicyRAGAgent completed in 1312ms
+
+────────────────────────────────────────────────────────────
+  D: ComplianceGuardAgent — Rerank + Fact-Check + Legal Scan
+────────────────────────────────────────────────────────────
+  [Compliance] Reranked 6 → 6 (thresh=0.0)
+  [Compliance] Fact-checked: 5/6 pass entailment
+
+────────────────────────────────────────────────────────────
+  HR COPILOT RESPONSE
+────────────────────────────────────────────────────────────
+
+  Q: What is the maternity leave policy?
+
+  Maternity Leave: 26 weeks (182 days) of fully paid leave for
+  female employees with a minimum of 80 days of service in the
+  preceding 12 months. Applicable for up to 2 surviving
+  children. Medical complications may extend leave by up to 4
+  additional weeks upon submission of a medical certificate.
+
+  Sources:   leave_policy.md
+  Agents:    policy_rag
+  Intent:    LEAVE_POLICY
+
+  Quality Metrics (RAGAS):
+    Faithfulness:      1.00  ✅
+    Answer Relevancy:  0.87  ✅
+    Context Precision: 0.80
+    Latency:           2140 ms
+    Compliance:        ✅ PASS
+```
+
+---
+
+### Step 4 — Interactive Mode
+
+```bash
+python hr_copilot_pipeline.py
+```
+
+```
+────────────────────────────────────────────────────────────
+  HR COPILOT — Interactive Mode (Ctrl+C to exit)
+────────────────────────────────────────────────────────────
+  Ask any HR question. Examples:
+  • 'How many leave days can I carry forward?'
+  • 'What is the salary band for a manager?'
+  • 'What do I do on my first day?'
+  • 'Can I work from home 4 days a week?'
+  • 'What is the total headcount?'
+
+  Your question: Can I work from home 4 days a week?
+
+  [... pipeline runs ...]
+
+  Hybrid remote work is available for confirmed employees
+  (post-probation) at up to 3 days per week. Requests for
+  4 days require VP-level approval and are granted only in
+  documented exceptional circumstances (medical, relocation,
+  caregiver responsibility).
+
+  Your question: ▌
+```
+
+---
+
+### Step 5 — Run RAGAS Evaluation Suite
+
+```bash
+python hr_copilot_pipeline.py --eval
+```
+
+```
+────────────────────────────────────────────────────────────
+  EVALUATION SUITE — 6 HR Scenarios
+────────────────────────────────────────────────────────────
+  [1/6] What is the maximum annual leave carry-forward...
+  [2/6] What is the salary band range for a Band 3 Senior Lead?
+  [3/6] Can I work from home 3 days per week if I completed probation?
+  [4/6] What must I complete in my first week as a new employee?
+  [5/6] Which department has the highest attrition...
+  [6/6] I want to understand my L&D budget and remote work...
+
+────────────────────────────────────────────────────────────
+  EVALUATION SUMMARY
+────────────────────────────────────────────────────────────
+  Questions:         6
+  Avg Faithfulness:  0.923  (gate: 0.80)
+  Avg Relevancy:     0.712
+  Avg Latency:       2140 ms
+  CI/CD Gate:        ✅ PASS
+  Report saved:      data/eval/eval_suite_report.json
+```
+
+**CI/CD gate (exit code 1 if faithfulness < 0.80):**
+```bash
+python hr_copilot_pipeline.py --eval --gate
+echo "Exit code: $?"   # 0 = pass, 1 = blocked
+```
+
+---
+
+### Step 6 — Streamlit Web UI
+
+```bash
+streamlit run hr_copilot_ui.py
+# Opens: http://localhost:8501
+```
+
+**5 tabs:**
+
+| Tab | What it shows |
+|---|---|
+| **💬 Chat** | Ask any HR question; see agent badges, RAGAS scores, parallel trace |
+| **🎯 Scenarios** | 40 pre-built questions across 8 HR domains |
+| **📊 Eval Suite** | 6-question RAGAS benchmark + CI/CD gate result |
+| **📚 Knowledge Base** | Browse HR policies, salary bands, headcount data |
+| **🏗️ Architecture** | Interactive 5-agent pipeline diagram |
+
+---
+
+### Run Components Individually
+
 ```bash
 python agent_framework.py                    # test registry + parallel executor
 python component_a_hr_indexing.py            # build FAISS + BM25 index
-python component_b_orchestrator_agent.py     # test intent routing
-python component_c_policy_data_agents.py     # test hybrid retrieval
-python component_d_compliance_guard.py       # test compliance pipeline
-python component_e_response_synthesizer.py   # test synthesis + RAGAS
+python component_b_orchestrator_agent.py     # test 6 intent routing scenarios
+python component_c_policy_data_agents.py     # test hybrid retrieval + DataQuery
+python component_d_compliance_guard.py       # test rerank + NLI + POSH block
+python component_e_response_synthesizer.py   # test synthesis + RAGAS eval
 ```
 
 ---
