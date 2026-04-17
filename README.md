@@ -369,6 +369,25 @@ class FinalHRResponse:
 
 ---
 
+## Screenshots
+
+### Chat Interface
+![Chat Tab](assets/screenshots/tab_chat.png)
+
+### Test Scenarios (40 pre-built questions)
+![Scenarios Tab](assets/screenshots/tab_scenarios.png)
+
+### RAGAS Evaluation Suite
+![Eval Suite Tab](assets/screenshots/tab_eval.png)
+
+### Knowledge Base Browser
+![Knowledge Base Tab](assets/screenshots/tab_knowledge_base.png)
+
+### Multi-Agent Architecture Diagram
+![Architecture Tab](assets/screenshots/tab_architecture.png)
+
+---
+
 ## Running the Application
 
 ### Step 1 — Install dependencies (one-time, ~5 min)
