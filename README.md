@@ -57,6 +57,31 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## Key Agentic Concepts
+
+A quick reference for the core ideas powering this system — useful whether you're reading the code for the first time or mapping it to a production framework.
+
+| Concept | What it means | Where in this repo |
+|---|---|---|
+| **Multi-Agent System (MAS)** | A collection of autonomous agents, each specialising in a narrow task, that collaborate to solve problems too complex for a single model. Used here because HR spans 9+ domains (leave, compensation, POSH, onboarding…) and one LLM degrades across all of them. | `agent_framework.py` |
+| **BaseAgent (Abstract Interface)** | A uniform contract — `agent_name` + `run(plan) → AgentResponse` — that every specialist agent must implement. Enforces consistent input/output regardless of what the agent does internally. | `agent_framework.py → BaseAgent` |
+| **PlannerAgent / Orchestrator** | An agent whose job is *routing*, not retrieval. Classifies the query into one of 9 intents, decomposes it into sub-questions, and decides which specialist agents to invoke. Equivalent to a ReAct-style "think before act" step. | `component_b_orchestrator_agent.py` |
+| **AgentRegistry (Service Discovery)** | A thread-safe dictionary mapping `AgentName → BaseAgent`. Agents register themselves at startup; the orchestrator looks them up by name at runtime. No hardcoded wiring between components. | `agent_framework.py → AgentRegistry` |
+| **AgentMessage (Typed Envelope)** | Structured inter-agent communication — every message carries `sender`, `recipient`, `payload`, and `trace_id`. The pipeline never passes raw strings between stages; all data flows through typed dataclasses. | `agent_framework.py → AgentMessage` |
+| **Fan-Out / Fan-In (Parallel Execution)** | The `ParallelAgentExecutor` launches all required specialist agents concurrently using `ThreadPoolExecutor`, then collects results sorted by confidence. Wall-clock latency = slowest agent, not sum of all agents. | `agent_framework.py → ParallelAgentExecutor` |
+| **RAG (Retrieval-Augmented Generation)** | Agents retrieve relevant document chunks *before* generating an answer, grounding the response in source material rather than relying on model memory. Prevents hallucination on domain-specific facts. | `component_a_hr_indexing.py`, `component_c_policy_data_agents.py` |
+| **Hybrid Retrieval (FAISS + BM25 + RRF)** | Two complementary retrievers — a dense bi-encoder (semantic similarity) and BM25 (keyword overlap) — whose ranked results are fused via Reciprocal Rank Fusion. RRF is used because vector and BM25 scores are incommensurable; ranks are not. | `component_a_hr_indexing.py` |
+| **Tool Use / Structured Data Access** | `DataQueryAgent` reads `salary_bands.json` and `headcount.csv` directly instead of retrieving from a vector index. This is the agent-tool pattern: specialist agents call deterministic tools when exact data is needed, avoiding numeric hallucination. | `component_c_policy_data_agents.py → DataQueryAgent` |
+| **Pipeline Stage vs. Agent** | `ComplianceGuardAgent` is not a `BaseAgent` — it has a different contract (filter + gate, not retriever). Distinguishing *pipeline stages* from *specialist agents* keeps interfaces clean and avoids forced abstraction. | `component_d_compliance_guard.py` |
+| **Compliance Gate (Hard Block vs. Caveat)** | Two levels of compliance response: a *caveat* is additive (answer is given + a warning appended); a *hard block* suppresses the answer entirely and redirects. Only queries where answering itself creates liability (e.g. POSH complaint filing) trigger a hard block. | `component_d_compliance_guard.py` |
+| **Typed Data Contracts** | All inter-agent data flows through `@dataclass` objects (`HRQueryPlan`, `AgentResponse`, `ComplianceCheckResult`, `FinalHRResponse`). This makes each stage independently testable and ensures agents can't silently pass the wrong shape of data. | `hr_data_models.py` |
+| **LLM-First + Rule-Based Fallback** | Every LLM call (Ollama Mistral 7B) has a deterministic fallback (regex routing / template synthesis). The system runs fully offline with zero LLM — degraded quality, but never broken. This is the resilience pattern for production agentic systems. | `component_b_orchestrator_agent.py`, `component_e_response_synthesizer.py` |
+| **Local RAGAS Evaluation** | Faithfulness, answer relevancy, and context precision are computed locally — reusing models already loaded (NLI for faithfulness, bi-encoder for relevancy). No `ragas` library or API key required. Faithfulness ≥ 0.80 acts as a CI/CD gate. | `component_e_response_synthesizer.py` |
+
+---
+
 ### Agent Framework Layer (`agent_framework.py`)
 
 The framework is **domain-agnostic** — it contains no HR logic. It enforces uniform contracts across all agents:
