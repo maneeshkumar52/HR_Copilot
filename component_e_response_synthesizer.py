@@ -55,7 +55,7 @@ FORMAT_HINTS = {
     QueryIntent.HEADCOUNT_DATA: "Present data as a clean table where appropriate. Include totals and percentages.",
     QueryIntent.SALARY_BAND:    "Present salary ranges clearly with currency. Note any conditions (ESOP eligibility, notice period).",
     QueryIntent.MULTI_DOMAIN:   "Address each part of the question separately with clear headers. Cite the relevant policy for each part.",
-    QueryIntent.UNKNOWN:        "Answer accurately from the provided context. Be concise and helpful.",
+    QueryIntent.UNKNOWN:        "Politely explain this question is outside HR scope. List the HR topics you can help with. Do NOT fabricate an HR answer.",
 }
 
 SYNTHESIS_SYSTEM = """You are the HR Copilot for Enterprise Corp — a precise, helpful, and compliant assistant.

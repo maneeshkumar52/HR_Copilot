@@ -61,7 +61,7 @@ ROUTING_TABLE: dict = {
     QueryIntent.SALARY_BAND:    [AgentName.DATA_QUERY, AgentName.COMPLIANCE],
     QueryIntent.MULTI_DOMAIN:   [AgentName.POLICY_RAG, AgentName.DATA_QUERY,
                                   AgentName.ONBOARDING, AgentName.COMPLIANCE],
-    QueryIntent.UNKNOWN:        [AgentName.POLICY_RAG, AgentName.COMPLIANCE],
+    QueryIntent.UNKNOWN:        [],   # Short-circuited in pipeline — no agents invoked
 }
 
 # Priority HR docs per intent (guides retrieval scope)
@@ -76,7 +76,7 @@ PRIORITY_DOCS_MAP: dict = {
     QueryIntent.HEADCOUNT_DATA: [],
     QueryIntent.SALARY_BAND:    [],
     QueryIntent.MULTI_DOMAIN:   [],
-    QueryIntent.UNKNOWN:        [],
+    QueryIntent.UNKNOWN:        [],   # No priority docs — handled by out-of-scope guard
 }
 
 NEEDS_STRUCTURED_DATA = {

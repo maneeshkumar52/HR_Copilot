@@ -186,6 +186,16 @@ SCENARIOS = {
         "As a new joiner at Band 2, what are my WFH rights and first week tasks?",
         "I am joining as a Manager (Band 4) — what are my ESOP, leave, and notice period?",
     ],
+    "🎯 Demo Showcase": [
+        "Compare Band 3 and Band 4: salary ranges, ESOP eligibility, notice period, WFH entitlement, and L&D budget.",
+        "I joined 3 months ago as a Band 2 Associate — what is my leave entitlement, office attendance requirement, and what mandatory training should I have completed by now?",
+        "I am on a PIP and have 12 days of accumulated annual leave — if I resign now, can I encash all 12 days, and what happens to my unvested ESOP?",
+        "My manager placed me on a PIP the same week I raised a grievance against them — what are my rights and who do I escalate to outside my reporting chain?",
+        "I completed an AWS Solutions Architect certification using my L&D budget and want to resign 4 months later — will the company claw back the full fee?",
+        "What is the headcount breakdown by department, which has the highest attrition, and what are the Band 3 salary ranges in Engineering vs Sales?",
+        "I was terminated during probation — am I entitled to notice pay, can I encash unused leave, and does any ESOP vest?",
+        "As a Band 4 Manager, can I approve my own WFH extension or does it need skip-level approval? What is the maximum I can work from abroad per year?",
+    ],
 }
 
 INTENT_COLORS = {
@@ -337,7 +347,7 @@ def render_pipeline_diagram():
     steps = [
         ("User Query", "#94a3b8"),
         ("B: Orchestrate", "#7c3aed"),
-        ("C: Retrieve", "#0ea5e9"),
+        ("C: Parallel Specialists", "#0ea5e9"),
         ("D: Compliance", "#ef4444"),
         ("E: Synthesize", "#10b981"),
         ("Answer", "#1e3a5f"),
@@ -696,7 +706,7 @@ def render_architecture_tab():
     st.markdown("### 🏗️ Multi-Agent Architecture")
 
     st.markdown("""
-    HR Copilot uses a **5-component multi-agent pipeline** where each agent is a specialist:
+    HR Copilot uses a **5-stage multi-agent pipeline** where stage **C** fans out into three parallel specialist agents:
     """)
 
     render_pipeline_diagram()
@@ -723,6 +733,7 @@ def render_architecture_tab():
             "desc": "Retrieves relevant policy text using FAISS vector search + BM25 keyword search, then fuses results with Reciprocal Rank Fusion (RRF) for best-of-both retrieval.",
             "intents": ["leave_policy", "compensation", "remote_work", "onboarding", "learning", "grievance"],
             "output": "AgentResponse + RetrievedChunks",
+            "display_id": "C1",
         },
         {
             "id": "C",
@@ -733,6 +744,7 @@ def render_architecture_tab():
             "desc": "Performs exact lookups on structured HR data: salary bands (JSON) and departmental headcount (CSV). Returns precise numbers, not approximations.",
             "intents": ["salary_band", "headcount_data", "compensation"],
             "output": "AgentResponse",
+            "display_id": "C2",
         },
         {
             "id": "C",
@@ -743,6 +755,7 @@ def render_architecture_tab():
             "desc": "Combines a hardcoded onboarding checklist (pre-joining, Day 1, Week 1, 30-60-90 plan) with RAG retrieval scoped to onboarding policy documents.",
             "intents": ["onboarding"],
             "output": "AgentResponse",
+            "display_id": "C3",
         },
         {
             "id": "D",
@@ -767,7 +780,8 @@ def render_architecture_tab():
     ]
 
     for agent in agents:
-        with st.expander(f"{agent['icon']} **[{agent['id']}] {agent['name']}** — {agent['role']}", expanded=False):
+        display_id = agent.get("display_id", agent["id"])
+        with st.expander(f"{agent['icon']} **[{display_id}] {agent['name']}** — {agent['role']}", expanded=False):
             col1, col2 = st.columns([2, 1])
             with col1:
                 st.markdown(f"**Description:** {agent['desc']}")

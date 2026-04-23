@@ -660,13 +660,79 @@ system behaviour — marked where relevant.
 35. Can my salary be cut if I move to a lower band role?
 36. Is the company allowed to reduce my CTC without my consent?
 
-### Out-of-Scope *(tests `UNKNOWN` intent fallback)*
+### Out-of-Scope *(tests `UNKNOWN` intent fallback — no HR agents invoked)*
 37. What is the weather forecast for tomorrow?
 38. Can you book a flight ticket to Mumbai for me?
+39. Tell me a joke about software engineers.
+40. What is the GDP of India in 2024?
 
 ### Multi-Domain *(triggers parallel execution across 2–3 agents)*
-39. I am on a PIP and want to know if I can take annual leave and work remotely.
-40. If I get terminated, does my ESOP vest and can I encash my remaining leave?
+41. I am on a PIP and want to know if I can take annual leave and work remotely.
+42. If I get terminated, does my ESOP vest and can I encash my remaining leave?
+
+---
+
+## Advanced / Demo Showcase Questions
+
+These complex, multi-constraint questions are ideal for live demos.
+Each one intentionally crosses 2–4 policy domains, triggers parallel
+specialist agents, and (in some cases) the compliance guard.
+
+> **Run these through the Chat tab in the Streamlit UI for the best visual experience.**
+> Each shows the agent fan-out, RAGAS metrics, and compliance caveats side-by-side.
+
+### Band & Seniority Deep-Dives
+
+**D1.** As a Band 3 Senior Lead on probation, how many WFH days am I entitled to, what is my L&D budget, and what happens to my sponsored certification clawback if I resign before completing probation?
+> *Triggers: remote_work + learning + probation caveat — 3-agent fan-out*
+
+**D2.** Compare Band 3 and Band 4 across all dimensions: salary ranges, ESOP eligibility, notice period, WFH entitlement, and annual L&D budget.
+> *Triggers: salary_band + compensation + remote_work — DataQueryAgent + PolicyRAGAgent*
+
+**D3.** I am a Band 2 employee with 18 months of service. If I move to a Band 3 role internally, does my leave balance reset, does my vesting schedule change, and what is my new notice period?
+> *Triggers: compensation + leave_policy + salary_band — multi_domain*
+
+### New Joiner Scenarios
+
+**D4.** I joined 3 months ago as a Band 2 Associate — what is my current leave entitlement, how many days must I come to office each week, and what mandatory compliance trainings should I have completed by now?
+> *Triggers: leave_policy + remote_work + onboarding — 3-agent fan-out*
+
+**D5.** What is my complete onboarding checklist for the first week, and what is the 30-60-90 day performance plan I should follow?
+> *Triggers: onboarding (OnboardingAgent + checklist)*
+
+**D6.** I am joining as a Band 4 Manager next month — what are my exact Day 1 tasks, and what benefits (health insurance, ESOP, L&D) do I need to enroll in within the first 30 days?
+> *Triggers: onboarding + compensation — OnboardingAgent + DataQueryAgent*
+
+### Grievance & Compliance Edge Cases
+
+**D7.** My manager has placed me on a PIP the same week I raised an informal grievance against them — what are my rights, what is the escalation path, and who do I contact outside my reporting chain?
+> *Triggers: grievance + pip caveat — compliance scan fires, HRBP caveat added*
+
+**D8.** I was terminated during my probation period — am I entitled to any notice pay, can I encash my unused annual leave, and does my ESOP vest at all?
+> *Triggers: leave_policy + compensation + grievance — termination caveat + multi_domain*
+
+**D9.** I want to file a formal complaint — my manager has been making comments about my salary that I find inappropriate. Is this a POSH matter or a standard grievance?
+> *Triggers: grievance intent — compliance scan; NOTE: if phrased as "file a POSH complaint" the ICC hard-block fires*
+
+**D10.** Can I take sabbatical leave for 3 months to pursue a personal certification, and will the company fund it or count it under my L&D budget?
+> *Triggers: leave_policy + learning — multi_domain*
+
+### Multi-Constraint Power Queries
+
+**D11.** I am on a PIP, have 12 days of accumulated annual leave, and am considering resigning. If I resign now, what is my notice period, can I encash all 12 leave days, and what happens to my unvested ESOP?
+> *Triggers: leave_policy + compensation + grievance — termination + pip caveats both fire*
+
+**D12.** My team has 3 members: one on maternity leave, one working from abroad, and one on a PIP. What policies govern each of them, and can all three be considered for the annual increment cycle?
+> *Triggers: leave_policy + remote_work + compensation + grievance — 4 domains*
+
+**D13.** As a Band 4 Manager, can I approve my own WFH extension, or does it need to go to my skip-level? And what is the maximum duration I can work from abroad in a calendar year?
+> *Triggers: remote_work — approval chain + WFA policy*
+
+**D14.** I completed an AWS Solutions Architect certification using my L&D budget. I want to resign 4 months later. Will the company claw back the full course fee, and how is the clawback calculated?
+> *Triggers: learning — clawback policy clause*
+
+**D15.** What is the headcount breakdown by department, which department has the highest attrition, and are there salary band differences between Engineering and Sales at Band 3?
+> *Triggers: headcount_data + salary_band — DataQueryAgent (structured data)*
 
 ---
 
@@ -681,6 +747,9 @@ python hr_copilot_pipeline.py --question "I want to file a POSH complaint agains
 
 # Test multi-domain parallel execution (watch the agent trace)
 python hr_copilot_pipeline.py --question "I am on a PIP and want to take annual leave and work remotely."
+
+# Run the advanced demo showcase questions
+python hr_copilot_pipeline.py --question "Compare Band 3 and Band 4: salary ranges, ESOP eligibility, notice period, WFH entitlement, and L&D budget."
 ```
 
 ---
